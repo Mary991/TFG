@@ -1,0 +1,16 @@
+# Artefactos de compilación LaTeX
+g.aux
+g.fdb_latexmk
+g.fls
+g.log
+g.out
+*.aux
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz
+*.toc
+
+# Sistema
+.DS_Store
