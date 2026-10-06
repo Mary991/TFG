@@ -1,0 +1,91 @@
+\chapter*{Introducción} \label{resumen}
+\addcontentsline{toc}{chapter}{Introducción}
+
+El cómputo con unidades de procesamiento gráfico (GPUs) se ha consolidado como una de las vías principales para acelerar cargas de trabajo de alto coste computacional, tal y como puede verse en ámbitos tan destacados como el aprendizaje automático o la simulación científica \cite{ibm_hpc}. El modelo habitual de despliegue consiste en adquirir una o varias tarjetas de una misma familia y generación, gestionadas por un \textit{vendor} de software (driver, \textit{runtime}) homogéneo. No obstante,
+la constante demanda de mejora de rendimiento en los sistemas fomenta recurrir a la compra de hardware cada vez
+ más nuevo, dejándose atrás un parque de dispositivos muy amplio compuesto por GPUs de años, generaciones y fabricantes 
+ muy distintos. Ello es consecuencia directa de la rápida obsolescencia de las tarjetas, unida a la tendencia de 
+ reciclar equipos entre otros factores.
+
+Surge entonces una pregunta natural: \emph{¿es posible aprovechar todas esas tarjetas a la vez dentro de una misma máquina?} La respuesta intuitiva es que sí, pero la práctica revela que existen numerosas restricciones técnicas ---a nivel de driver, de arquitectura y de virtualización--- que condicionan e incluso impiden dicha integración. Este trabajo se plantea como un estudio experimental para responder a esa pregunta de forma rigurosa: construiremos un sistema real con varias GPUs de características diferentes y documentaremos, paso a paso, una serie de pruebas explorando qué es posible hacer con ellas y qué no.
+
+El caso de estudio dispone de tres tarjetas NVIDIA de la arquitectura GT200 (2008--2009): dos \textbf{NVIDIA Tesla C1060} (tarjetas de cómputo, \textit{compute capability} 1.3) y una \textbf{ASUS ENGTS250} (tarjeta gráfica de consumo, \textit{compute capability} 1.1). La configuración experimental empleó dos GPUs, una Tesla C1060 y la ENGTS250, porque la tercera tarjeta no fue detectada a través del \textit{riser} PCIe. Ambos modelos están limitados a la última rama de driver NVIDIA denominada \textit{legacy}, 
+versión 340.108, cuyo último \textit{release} oficial data de 2019. Este detalle, aparentemente anecdótico, condiciona todo el trabajo y lo convierte en un excelente banco de pruebas para estudiar la viabilidad de sistemas multi-GPU heterogéneos con limitaciones tecnológicas especialmente remarcables.
+
+\section*{Objetivos}
+\addcontentsline{toc}{section}{Objetivos}
+
+El propósito general de este trabajo es doble: estudiar experimentalmente la viabilidad de 
+aprovechar múltiples GPUs heterogéneas en un mismo sistema mediante un caso de estudio real, 
+y sistematizar los criterios de viabilidad empleados en dicho estudio en un marco teórico 
+aplicable \textit{a priori} a otras combinaciones de hardware. La manera de proceder para la construcción del marco teórico 
+ha sido de forma 
+inductiva: se formula y se completa a partir de los propios obstáculos que la experimentación 
+ha ido revelando, en lugar de imponerse como un criterio fijado de antemano. Este segundo objetivo 
+se desglosa en los siguientes:
+\begin{itemize}
+    \item Diseñar y construir un sistema que integre varias GPUs de generaciones y propósitos distintos,
+     identificando las posibles configuraciones que lo hacen posible.
+
+    \item Analizar la limitación que supone disponer de un único driver para un sistema multi-GPU y evaluar los dos escenarios que 
+    derivan de esta condición: emplear un mismo driver para todas las tarjetas (opción no siempre disponible), o aislar cada tarjeta en un entorno 
+    propio con su versión de driver y su sistema operativo correspondiente.
+
+    \item Instalar y validar un driver \textit{legacy} de NVIDIA sobre un sistema con 
+    kernel y \textit{toolchain} modernos, resolviendo las incompatibilidades que surjan 
+    entre ambos.
+
+    \item Proporcionar acceso a las GPUs desde un entorno aislado mediante el paso de 
+    dispositivos, e instalar el toolkit CUDA compatible con las arquitecturas disponibles.
+
+    \item Someter a pruebas las tarjetas para medición y comparación de rendimientos (cómputo y ancho de banda de memoria), así como evaluar la 
+    contención al ejecutar cargas de trabajo concurrentes.
+
+    \item Documentar los fallos y limitaciones encontrados, tanto de hardware como de 
+    software, y plasmarlos en una serie de parámetros de estudio en un marco teórico de criterios de viabilidad  
+    generalizable para otros sistemas de características similares.
+\end{itemize}
+
+\section*{Motivación}
+\addcontentsline{toc}{section}{Motivación}
+
+La motivación de este trabajo es doble. En primer lugar, existe una motivación económica y de sostenibilidad: 
+la adquisición de hardware de cómputo nuevo es costosa y el ciclo de vida útil de las tarjetas gráficas es corto,
+por lo que reutilizar tarjetas de segunda mano o rescatadas de otros equipos resulta atractivo tanto por su bajo
+coste como por reducir el residuo electrónico. Si se demostrase que es posible combinar tarjetas de distintas 
+generaciones y marcas en una misma máquina, cualquier usuario podría construir un nodo de cómputo aprovechando 
+hardware que de otro modo se descartaría.
+
+En segundo lugar, el problema tiene un interés técnico genuino. Las GPUs no son componentes fácilmente intercambiables: 
+dependen de un driver propietario, de arquitecturas de cómputo concretas y de un \textit{runtime} 
+(CUDA en el caso de nuestras GPUs NVIDIA). La heterogeneidad introduce
+además complejidad en el aislamiento, la gestión de memoria y la contención de recursos. Estudiar dónde están 
+los límites de esta heterogeneidad, y cómo pueden salvarse con las distintas herramientas actuales, 
+es un problema abierto que combina conocimientos de sistemas operativos, arquitectura 
+de computadores y virtualización.
+
+Como se comprobará a lo largo de la memoria, el trabajo también se justifica por la gran cantidad de problemas
+reales ---y a menudo no documentados--- que surgen al combinar componentes \textit{legacy} con software y hardware
+modernos. Cada uno de esos problemas constituye un resultado en sí mismo.
+
+\section*{Metodología de trabajo}
+\addcontentsline{toc}{section}{Metodología de trabajo}
+
+Dado el carácter experimental del trabajo, la metodología seguida es la propia de una bitácora de experimentación estructurada. En cada fase se ha procedido de la siguiente manera:
+
+\begin{enumerate}
+    \item \textbf{Planteamiento}: se describe el escenario que se quiere conseguir y se estudian las 
+    alternativas técnicas disponibles.
+
+    \item \textbf{Experimentación}: se implementa el escenario sobre el hardware real y se documentan los obstáculos encontrados, con su causa raíz cuando es posible determinarla.
+
+    \item \textbf{Validación}: cada fase concluye con una comprobación objetiva del resultado.
+
+    \item \textbf{Discusión}: se analizan los resultados obtenidos y su relevancia para el objetivo general de viabilidad.
+\end{enumerate}
+
+En los casos en los que una vía resulta en descarte, 
+el fracaso se documenta y se utiliza como justificación técnica de la opción alternativa, siguiendo la dinámica de que en un 
+trabajo experimental los resultados negativos son tan informativos como los positivos.
+
+

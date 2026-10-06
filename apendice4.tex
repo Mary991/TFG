@@ -1,0 +1,51 @@
+\chapter{Manual de uso del sistema} \label{ape:manual-uso}
+
+Este apéndice recoge las consideraciones operativas para el usuario final del sistema, derivadas de la experimentación de los capítulos~\ref{cap3} y~\ref{cap4}.
+
+\section{Distinción entre uso y desarrollo}
+
+Compilar nuevo código CUDA para este hardware requiere un entorno de compilación adicional (el \textit{chroot} con Debian Jessie/gcc 4.9 descrito en el capítulo~\ref{cap5}), un paso significativamente más complejo que la instalación del driver y el uso del \textit{runtime} precompilado. El procedimiento debe distinguir claramente entre:
+
+\begin{itemize}
+    \item \textbf{Uso del hardware con binarios o software ya compilado}: viable para cualquier usuario, sin pasos adicionales. Basta con el driver 340.108 en el host, el stack \textit{userspace} en el contenedor y el \textit{runtime} CUDA 6.5.
+
+    \item \textbf{Desarrollo de código CUDA nuevo}: requiere el entorno de compilación \textit{legacy} (\textit{chroot} con gcc 4.9), de mayor complejidad técnica, y la compilación con \texttt{-gencode} limitada a las arquitecturas reales del hardware (\texttt{sm\_11} y \texttt{sm\_13}).
+
+    \item \textbf{Ejecución concurrente en múltiples GPUs}: viable y sin degradación de rendimiento, salvo por la condición de carrera documentada en el capítulo~\ref{cap5}, mitigable con un simple reintento o una pequeña espera tras el arranque.
+\end{itemize}
+
+\section{Selección de dispositivo}
+
+Todos los ejemplos del SDK de CUDA 6.5 aceptan el flag \texttt{--device=N} para seleccionar la GPU destino. El mapeo es: \texttt{device 0} = Tesla C1060, \texttt{device 1} = GTS 250 (véase la tabla \ref{tab:devices} del capítulo~\ref{cap4}).
+
+\section{Ejecución concurrente}
+
+Para lanzar cargas de trabajo en ambas GPUs simultáneamente:
+
+\begin{Verbatim}
+# Tras cada arranque del contenedor, escalonar ligeramente el primer lanzamiento
+sleep 2
+./matrixMul --device=0 & ./matrixMul --device=1 &
+\end{Verbatim}
+
+En caso de fallo en el primer intento tras un arranque en frío (códigos de error 38 o 10), basta con reintentar: el problema no reaparece una vez el driver ha completado al menos una inicialización de contexto por GPU.
+
+\section{Modos de arranque LXC y VFIO}
+
+El host dispone de dos configuraciones incompatibles: el modo LXC carga el driver NVIDIA en el anfitrión, mientras que el modo VFIO reserva las GPUs para \texttt{vfio-pci}. El arranque por defecto es siempre el modo LXC.
+
+\begin{itemize}
+    \item \textbf{Comprobar el modo activo:}
+\begin{Verbatim}
+check-mode
+\end{Verbatim}
+    El comando busca la marca \texttt{vfio\_dynamic} en \texttt{/proc/cmdline} y muestra las GPUs detectadas con su driver activo.
+
+    \item \textbf{Arrancar una vez en modo VFIO:}
+\begin{Verbatim}
+boot-vfio
+\end{Verbatim}
+    Este comando selecciona la entrada GRUB de VFIO únicamente para el próximo reinicio. Si la selección falla, cancela el reinicio. Tras ese arranque experimental, el servicio de limpieza de \texttt{next\_entry} devuelve automáticamente los reinicios siguientes al modo LXC.
+\end{itemize}
+
+No deben conmutarse los modos con máquinas virtuales o contenedores en ejecución. Antes de validar el driver debe comprobarse que el modo activo es LXC. La arquitectura completa de este arranque dual se explica en el capítulo~\ref{cap1}; aquí solo se documenta su uso operativo, no el código íntegro de los scripts.

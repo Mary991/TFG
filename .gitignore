@@ -11,6 +11,31 @@ g.out
 *.out
 *.synctex.gz
 *.toc
+*.bbl
+*.blg
+*.lof
+*.lot
+*.bcf
+*.run.xml
+*.nav
+*.snm
+*.vrb
+
+# PDF generado en la raíz (el documento se compila desde main.tex)
+/main.pdf
+
+# Ficheros sueltos de trabajo
+latex2.tex.txt
+xelatex*.fls
+
+# Entorno / editores
+__pycache__/
+*.pyc
+.venv/
+venv/
+.vscode/
+.idea/
 
 # Sistema
 .DS_Store
+Thumbs.db

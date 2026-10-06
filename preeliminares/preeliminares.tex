@@ -1,0 +1,429 @@
+\chapter*{Preliminares}
+\addcontentsline{toc}{chapter}{Preliminares}
+\markboth{Preliminares}{Preliminares}
+\label{Preeliminares}
+% Preliminares no cuenta como capítulo numerado: secciones/tablas/figuras sin prefijo de capítulo
+\renewcommand{\thesection}{\arabic{section}}
+\renewcommand{\thesubsection}{\arabic{section}.\arabic{subsection}}
+\renewcommand{\thesubsubsection}{\arabic{section}.\arabic{subsection}.\arabic{subsubsection}}
+\renewcommand{\thetable}{\arabic{table}}
+\renewcommand{\thefigure}{\arabic{figure}}
+\renewcommand{\theequation}{\arabic{equation}}
+\setcounter{section}{0}
+\setcounter{table}{0}
+\setcounter{figure}{0}
+\setcounter{equation}{0}
+
+En este capítulo se introducen los elementos necesarios para seguir el resto del trabajo: el cómputo con GPUs y la plataforma CUDA, el ecosistema de software NVIDIA, la virtualización de dispositivos, los contenedores LXC, el hipervisor Proxmox VE y la gestión de drivers de kernel en Linux. El lector familiarizado con estos temas puede omitir este capítulo sin pérdida de continuidad.
+
+\section{Cómputo con GPUs y la plataforma CUDA}
+
+Una unidad de procesamiento gráfico (GPU) es un procesador especializado que integra un gran número de núcleos de ejecución sencillos, capaces de ejecutar de forma simultánea miles de hilos. Esta organización, radicalmente distinta de la de una CPU (pocos núcleos complejos con grandes caches), hace que las GPUs sean especialmente adecuadas para cargas de trabajo masivamente paralelas, como el procesamiento de imágenes o las operaciones con matrices y vectores \cite{nvidia_cuda_programming}.
+
+Aunque las GPUs nacieron para el renderizado gráfico, pronto se generalizó su uso para cómputo 
+de propósito general (GPGPU). NVIDIA acompañó este cambio con la plataforma \textbf{CUDA} (\textit{Compute Unified Device Architecture}),
+ presentada en 2007, que permite programar las GPUs con extensiones del lenguaje C y un \textit{runtime} propio 
+ \cite{nvidia_cuda_programming}. 
+\subsection{Arquitectura de una GPU NVIDIA}
+
+El modelo de ejecución de una GPU NVIDIA se organiza jerárquicamente. La GPU se compone de varios 
+\textit{Streaming Multiprocessors} (SM), cada uno de los cuales contiene un conjunto de núcleos CUDA que ejecutan las instrucciones.
+ El programador define \textit{kernels}, funciones que se ejecutan en la GPU, y las lanza sobre una rejilla (\textit{grid}) 
+ de bloques de hilos; el planificador de la GPU distribuye esos bloques entre los SM disponibles \cite{nvidia_cuda_programming}.
+
+Para que el mismo código fuente funcione en GPUs distintas, NVIDIA asigna a cada arquitectura una 
+\textbf{\textit{compute capability}}, un número (p. ej., 1.1, 1.3, 5.0) que describe las capacidades 
+de cómputo de la arquitectura \cite{nvidia_legacy_gpus,realworldtech_gt200}. 
+El compilador de CUDA, \texttt{nvcc}, genera código para arquitecturas concretas mediante directivas
+ \texttt{-gencode arch=compute\_X,code=sm\_X}. Una misma aplicación puede incluir varias versiones de un kernel, 
+ una por arquitectura, de modo que el \textit{runtime} seleccione la adecuada en tiempo de ejecución. La evolución de la 
+ \textit{compute capability} es la razón última de muchas de las incompatibilidades de software que encontraremos en este trabajo: 
+ cada generación añade características (memoria unificada, \textit{ECC}, etc.) que el software más reciente da por supuestas.
+
+\subsection{Las GPUs del caso de estudio}
+
+Las dos tarjetas utilizadas en este trabajo pertenecen a la arquitectura \textbf{GT200}, lanzada por NVIDIA en 2008--2009 \cite{nvidia_legacy_gpus,realworldtech_gt200}. A pesar de compartir arquitectura, son productos de propósitos muy distintos:
+
+\begin{table}[htbp]
+\centering
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{|l|c|c|}
+\hline
+ & \textbf{Tesla C1060} & \textbf{ASUS ENGTS250} \\
+\hline
+Propósito & Cómputo (Tesla) & Gráfico de consumo (GeForce) \\
+\hline
+Compute capability & 1.3 & 1.1 \\
+\hline
+Multiprocesadores (SM) & 30 & 16 \\
+\hline
+Núcleos CUDA & 240 & 128 \\
+\hline
+Memoria global & 4096 MB & 1024 MB \\
+\hline
+Ancho de bus de memoria & 512-bit & 256-bit \\
+\hline
+Soporte UVA (Unified Addressing)& No & No \\
+\hline
+\end{tabular}
+\caption{Especificaciones de las GPUs del caso de estudio (obtenidas con \texttt{deviceQuery} y contrastadas con las fichas de \cite{videocardz_gt200,videocardz_c1060})}
+\label{tab:gpus}
+\end{table}
+
+Como se aprecia en la tabla \ref{tab:gpus}, la diferencia de rendimiento teórico es de casi 2$\times$ entre ambas tarjetas, un dato que contrastaremos con las mediciones reales en el capítulo 5. Además, ninguna de las dos soporta memoria unificada, lo que condicionará la configuración del software (véase el capítulo 3).
+
+\section{El ecosistema de software NVIDIA}
+
+El software de NVIDIA para Linux se estructura en dos niveles con responsabilidades muy distintas \cite{nvidia_driver_readme}:
+
+\begin{itemize}
+    \item \textbf{Módulos de kernel}: el driver propiamente dicho (\texttt{nvidia.ko} y, 
+    en las versiones modernas también, \texttt{nvidia-uvm.ko}), compilado contra los \textit{headers} 
+    del kernel en ejecución. Es la capa que controla físicamente las tarjetas: gestión de la VRAM,
+    frecuencias y voltajes de los chips, así como la asignación de trabajo a los núcleos CUDA.
+
+    \item \textbf{Stack \textit{userspace}}: librerías y herramientas que se ejecutan en espacio de usuario, entre las que destacan \texttt{libcuda} (la interfaz del \textit{runtime} CUDA), \texttt{nvidia-smi} (herramienta de administración y monitorización \cite{nvidia_smi}) y las librerías de OpenGL/CUDA. A diferencia del módulo de kernel, este stack es un binario precompilado por NVIDIA que no depende de la versión del kernel.
+\end{itemize}
+
+Esta separación es crucial para entender el trabajo: el módulo de kernel del driver es el que sufre 
+las incompatibilidades frente a actualizaciones en el kernel del sistema operativo, mientras
+que el stack \textit{userspace} es portable entre sistemas. La gestión del módulo se realiza tradicionalmente
+con \textbf{DKMS} (\textit{Dynamic Kernel Module Support}), un framework que automatiza 
+la recompilación de módulos ante cambios de kernel, manteniendo así la supervivencia del
+sistema ante actualizaciones \cite{dkms}.
+
+\textbf{UVM (Unified Virtual Memory)} es un subsistema del driver NVIDIA que presenta a
+ la CPU y a la GPU una única visión del espacio de direcciones, de modo que RAM y VRAM 
+ dejan de ser regiones aisladas: el programador realiza una única reserva de memoria y 
+ el mecanismo de \textit{page faulting} por hardware se encarga de mover las páginas 
+ entre ambos espacios \cite{nvidia_uvm_blog,nvidia_uvm_docs}. La memoria unificada simplifica 
+ enormemente la programación CUDA, ya que elimina la necesidad de copias explícitas entre CPU y GPU.
+Como se verá en el capítulo 3, las GPUs GT200 no soportan esta característica, lo que
+impone las técnicas de gestión de memoria clásicas.
+
+\section{Virtualización de dispositivos: VFIO, IOMMU, ACS y FLR}
+Cuando se plantea integrar en un mismo sistema GPUs heterogéneas que previsiblemente requieren 
+controladores distintos, resulta indispensable abordar el uso de máquinas virtuales con paso directo 
+de dispositivos (GPU passthrough). No obstante, dado que este escenario no se corresponde con el caso de
+estudio inicial de este trabajo, se introduce también la tecnología de contenedores de Linux (LXC) como una
+alternativa de virtualización a nivel de sistema operativo. Las soluciones aquí mencionadas se explorarán
+en mayor profundidad en capítulos posteriores de esta memoria.
+
+\subsection{IOMMU}
+
+La unidad \textbf{IOMMU} (\textit{I/O Memory Management Unit}) es un componente lógico integrado en el procesador y respaldado por el soporte 
+de la BIOS/UEFI y el \textit{chipset}, cuya función principal es traducir las direcciones de memoria virtuales y físicas para los dispositivos
+de entrada/salida \cite{kernel_iommu,ms_sriov}. Mediante este mecanismo, se restringe y aísla el acceso directo a memoria (DMA) de los periféricos, 
+asignando a cada uno un espacio de direcciones exclusivo.
+
+Este aislamiento resulta fundamental en entornos de virtualización. En ausencia de IOMMU, cualquier periférico con capacidades DMA podría leer 
+o escribir en posiciones arbitrarias de la memoria física, comprometiendo la seguridad del anfitrión y de otras instancias virtualizadas. Al 
+habilitar IOMMU, el hipervisor confina las operaciones del hardware en un espacio de direcciones acotado (\textbf{sandbox}) que este percibe como la memoria 
+física completa.
+
+A nivel práctico, el sistema operativo organiza los dispositivos en \textbf{grupos IOMMU} (\textit{IOMMU groups}), que 
+representan la unidad 
+mínima indivisible de aislamiento de hardware que el kernel de Linux puede gestionar y proteger de forma segura. Para que un 
+dispositivo (como una GPU) conforme un grupo IOMMU independiente y pueda 
+asignarse en exclusiva 
+a una máquina virtual, se requiere una conexión directa y dedicada a las líneas PCIe de la CPU respaldada por mecanismos 
+de control de acceso 
+(\textit{Access Control Services}, ACS). Este es precisamente el requisito que la literatura 
+ aplicada a la virtualización con paso directo de GPU identifica como condición previa: sin 
+ separación en grupos IOMMU independientes, el paso directo de una tarjeta gráfica no resulta 
+ viable \cite{heiko_iommu_groups}. Por el contrario, cuando los periféricos carecen de enlace directo y comparten 
+conmutadores PCIe o 
+líneas subordinadas al \textit{chipset} de la placa base sin aislamiento ACS, la IOMMU no puede discriminar sus 
+transferencias DMA de forma 
+individualizada; como consecuencia, dichos dispositivos quedan forzosamente dentro de un mismo grupo IOMMU, debiendo 
+asignarse en bloque a
+la misma máquina virtual o permanecer en el sistema anfitrión.
+
+\subsection{ACS}
+
+En las generaciones antiguas de chipsets no existía la granularidad de aislamiento actual: esto se debía, por un lado, a la dependencia de
+buses compartidos así como a arquitecturas previas a la implementación de ACS, medida extra de seguridad a 
+nivel de hardware.
+
+El estándar PCIe contempla de forma nativa la comunicación directa entre pares (\textit{peer-to-peer}, P2P), permitiendo que dos 
+dispositivos conectados a un mismo conmutador o \textit{chipset} transfieran datos entre sí sin que el tráfico ascienda a la CPU. 
+Si bien esta característica optimiza la latencia y descarga al bus principal, plantea un compromiso de seguridad en entornos de 
+virtualización: una transferencia DMA directa entre periféricos resulta invisible para la IOMMU, eludiendo sus tablas de traducción y 
+políticas de protección. Ante la imposibilidad de supervisar dicho tráfico, el sistema operativo se veía forzado a 
+vincular preventivamente a todos los dispositivos interconectados dentro de un mismo grupo indivisible.
+Para cerrar esa brecha se introdujo la especificación \textbf{ACS} (\textit{Access Control Services}) en el estándar
+PCIe \cite{pcisig2022,heiko_iommu_groups}. ACS permite la redirección de paquetes (\textit{P2P Request Redirect}) de tal forma que se
+eleva la comunicación entre dos dispositivos a un nivel en el que la CPU (o la IOMMU) debe 
+validarla antes de que se produzca, cortando de raíz la problemática de las comunicaciones no supervisadas. 
+
+La adopción de este mecanismo permite alcanzar la granularidad de aislamiento anteriormente mencionada a nivel de puerto individual,
+haciendo viable la asignación exclusiva de periféricos a máquinas virtuales independientes. No obstante, este desacoplamiento encuentra 
+su límite en los dispositivos multifunción; en una tarjeta gráfica, por ejemplo, el núcleo de cómputo suele compartir grupo IOMMU con su
+controladora de audio digital integrada, ya que el propio silicio del punto final (\textit{endpoint}) carece de aislamiento ACS entre sus
+funciones internas, obligando al hipervisor a transferir el conjunto en bloque.
+
+\subsection{Function Level Reset (FLR)}
+
+El estándar PCIe exige que un dispositivo pueda ser devuelto a su configuración por defecto mediante \textit{host}
+(\textit{Function Level Reset}), mecanismo de reinicio de hardware inducido vía software tras modificar un registro interno del dispositivo 
+\cite{pcisig2022,amd_pg344_flr}. 
+Lo característico de FLR es que la operación afecta única y exclusivamente al dispositivo objetivo, sin perturbar al resto de dispositivos
+del bus.
+En el contexto de la virtualización, FLR es imprescindible: al apagar o reiniciar una máquina virtual que tiene asignada un dispositivo, 
+es necesario garantizar un punto de partida limpio del mismo para que en el siguiente arranque, la configuración del dispositivo afectado
+sea conocida. De este modo se garantiza que las siguientes inicializaciones 
+no hereden contextos corruptos en sus registros o memoria interna, previniendo fallos en el \textit{host} o bloqueos críticos 
+en el sistema.
+ 
+
+\section{Máquinas virtuales y contenedores}
+
+\subsection{Máquinas virtuales con QEMU/KVM y VFIO}
+
+En el ecosistema Linux, la virtualización moderna se sustenta habitualmente en el uso conjunto de dos tecnologías complementarias: \textbf{KVM} y \textbf{QEMU}.
+
+Por un lado, \textbf{KVM} (\textit{Kernel-based Virtual Machine}) es un módulo del \textit{kernel} de Linux que dota a este de capacidades de hipervisor, 
+apoyándose en las extensiones de virtualización por hardware del procesador (como AMD-V o Intel VT-x). La función de KVM como hipervisor es proporcionar la 
+capa de coordinación necesaria que permite al procesador interactuar con el sistema operativo de la máquina virtual de forma prácticamente nativa, sin necesidad
+ de traducción de instrucciones ni de emulación por software para CPU y RAM, lo que reduce la sobrecarga a niveles marginales.
+
+Por otro lado, \textbf{QEMU} (\textit{Quick Emulator}) actúa en el espacio de usuario gestionando el ciclo de vida de la máquina virtual y modelando la 
+topología de la plataforma (controladores de bus, temporizadores y periféricos estándar). Si bien QEMU cuenta con la capacidad autónoma de emular arquitecturas 
+completas por software, dicho mecanismo introduce una severa penalización de rendimiento. Al combinarse con KVM, QEMU delega la CPU y la memoria en el 
+procesador físico, asumiendo únicamente la creación de los periféricos virtuales básicos (discos, red o controladores de bus). Sin embargo, cuando se 
+requiere asignar una tarjeta física real (como una GPU) a la máquina virtual, QEMU no la emula: se apoya en el subsistema \textbf{VFIO} para conectar ese 
+dispositivo del \textit{host} directamente con el sistema invitado.
+
+\textbf{VFIO} (\textit{Virtual Function I/O}) es el \textit{framework} del núcleo de Linux que expone hacia el espacio de usuario (en este caso, QEMU) el 
+acceso directo y exclusivo a los dispositivos físicos conectados al bus PCIe de forma segura y controlada.
+
+Conviene enfatizar la naturaleza de este acceso exclusivo: en la práctica, VFIO opera como un mecanismo de aislamiento preventivo que impide que el sistema 
+operativo anfitrión reclame o inicialice el dispositivo como lo haría en un arranque convencional sin virtualización. Al vincular el hardware al controlador 
+\texttt{vfio-pci}, el \textit{kernel} renuncia a gestionar la tarjeta con sus controladores habituales, reteniéndola en un estado neutro para garantizar que 
+solo el proceso de virtualización tenga potestad sobre sus registros y memoria.
+
+La característica distintiva de VFIO es que su diseño se fundamenta de manera estricta en el concepto de \textbf{grupo IOMMU}:
+
+\begin{itemize}
+    \item \textbf{Aislamiento mandatorio:} VFIO no permite asociar un único dispositivo a una máquina virtual si este comparte grupo IOMMU con otros 
+    periféricos, exigiendo que la totalidad de los componentes del grupo se desvinculen de sus controladores habituales del \textit{host} y pasen a estar 
+    bajo el control de VFIO. De este modo, garantiza que ningún dispositivo adyacente pueda realizar accesos no supervisados hacia o desde la memoria de la
+    máquina virtual.
+    \item \textbf{El controlador \texttt{vfio-pci}:} Para llevar a cabo la cesión, el sistema anfitrión retira el dispositivo de su controlador original 
+    (como el controlador gráfico estándar) y lo enlaza al módulo genérico \texttt{vfio-pci}. Este controlador no inicializa la tarjeta para su uso local, 
+    sino que actúa como una pasarela que mapea los registros de configuración, las interrupciones (MSI/MSI-X) y los espacios de memoria física (BAR) de la 
+    GPU directamente dentro del espacio de direcciones de la máquina virtual.
+\end{itemize}
+
+Gracias a esta arquitectura, la máquina virtual obtiene acceso directo de lectura y escritura sobre el silicio de la tarjeta gráfica mediante operaciones DMA traducidas por la IOMMU, logrando un rendimiento equivalente al de una ejecución nativa.
+
+No obstante, esta aproximación introduce dos compromisos fundamentales:
+\begin{itemize}
+    \item \textbf{Pérdida de concurrencia del hardware:} El periférico deja de operar como un recurso compartido para convertirse en un componente estrictamente dedicado, quedando inaccesible tanto para el sistema anfitrión como para otras instancias concurrentes.
+    \item \textbf{Dependencia de capacidades del silicio:} Para que la alternancia entre arranques sea viable y predecible, el hardware cedido debe implementar mecanismos rigurosos de reinicio (como el estándar FLR analizado previamente) y, de forma preferente en plataformas contemporáneas, firmware compatible con arranque UEFI \cite{pcisig2022,amd_pg344_flr,uefi_gop_amd}. De lo contrario, se corre el riesgo de que el dispositivo quede en estados de memoria indeterminados tras el apagado de la máquina invitada.
+\end{itemize}
+
+\subsection{Contenedores LXC}
+
+Los contenedores \textbf{LXC} (\textit{Linux Containers}) constituyen una tecnología de virtualización ligera a nivel de sistema
+operativo. A diferencia de las máquinas virtuales completas, el contenedor no ejecuta un \textit{kernel} independiente, sino que se 
+sustenta en dos primitivas nativas del \textit{kernel} de Linux para gobernar los procesos: los \textbf{espacios de nombres} 
+(\textit{namespaces}) y los \textbf{grupos de control} (\textit{cgroups}).
+
+Mientras que los \textit{namespaces} delimitan el ámbito de visibilidad del proceso —proporcionando vistas aisladas del árbol 
+de procesos (\texttt{pid}), puntos de montaje (\texttt{mnt}), interfaces de red (\texttt{net}) e identificadores de usuario 
+(\texttt{user})—, los \textit{cgroups} regulan la asignación y consumo de recursos físicos (cuotas de CPU y memoria principal). 
+Asimismo, el subsistema \textit{cgroup devices} actúa como un mecanismo de filtrado que autoriza o restringe el acceso a nodos 
+de hardware específicos en función de los permisos de los que disponga el grupo asignado en la jerarquía existente.
+
+A diferencia del paradigma de virtualización con VFIO, LXC no desvincula el dispositivo PCIe del anfitrión. El control del 
+\textit{driver} recae íntegra en el \textit{host}, el cual expone hacia el espacio de usuario la interfaz de comunicación con 
+el hardware mediante los denominados archivos \textit{character devices}. 
+En la arquitectura de Linux, estos nodos especiales no representan ficheros 
+con datos ordinarios en disco, sino puntos de entrada al subsistema de entrada/salida que canalizan flujos continuos de datos 
+e instrucciones directamente hacia el controlador. 
+
+Para conceder acceso a estos recursos desde un entorno LXC, es necesario hacer un \textit{bind mount}, 
+técnica que proyecta dicho nodo en el sistema de archivos del contenedor sin duplicados ni emulación. Este 
+mecanismo permite una discriminación selectiva y granular, ya que conociendo qué archivos se quieren montar, se habilita
+acceso exclusivo al hardware deseado sin afectar al resto.
+
+En consecuencia, esta aproximación prescinde de requisitos como la pertenencia a un grupo IOMMU independiente o la 
+compatibilidad con el mecanismo de reinicio FLR; sin embargo, no establece una frontera física de aislamiento: la contención 
+es estrictamente lógica y a nivel de proceso, no de silicio.
+
+La otra implicación directa de esta arquitectura es la dependencia absoluta del módulo del \textit{kernel} cargado en el anfitrión: el 
+contenedor se ve imposibilitado para ejecutar una versión de \textit{driver} divergente. Por consiguiente, las bibliotecas de 
+cómputo CUDA en espacio de usuario instaladas en el contenedor deben mantener compatibilidad binaria estricta con el controlador 
+del \textit{host}. 
+Finalmente, en lo relativo al modelo de privilegios, en este trabajo experimental se ha configurado el contenedor en modo 
+privilegiado (donde el usuario \texttt{root} del contenedor preserva el identificador \texttt{UID 0} del \textit{host}). Esta 
+decisión responde a criterios de simplicidad operativa para el acceso directo a los \textit{character devices},
+asumiendo este compromiso al tratarse de un entorno de pruebas controlado y dedicado en exclusiva a tareas de cómputo.
+
+\section{Proxmox VE}
+
+\textbf{Proxmox VE} (\textit{Proxmox Virtual Environment}) es una plataforma de virtualización de 
+código abierto basada en Debian que integra, bajo una interfaz unificada de administración, las 
+dos tecnologías descritas previamente: máquinas virtuales basadas en KVM/QEMU y contenedores 
+\textit{LXC} \cite{proxmox_ve}.
+
+Su relevancia en este trabajo es estrictamente metodológica: proporciona 
+una infraestructura homogénea para desplegar y contrastar, sobre una misma máquina, dos 
+paradigmas distintos de abstracción y gestión del hardware. Al estar basado en 
+Debian, 
+ofrece un ecosistema predecible para la administración de paquetes y herramientas de 
+depuración a bajo nivel. Su almacenamiento gestionado, sus plantillas de sistemas mínimos y su configuración declarativa reducen además la variabilidad al reconstruir el entorno experimental. Asimismo, permite seleccionar el kernel, utilizar sus \textit{headers} para compilar módulos y fijar el arranque a una versión concreta; esta capacidad es relevante para cualquier trabajo con módulos del kernel, sin anticipar aquí la versión empleada.
+Si bien una instalación mínima de Debian sería más ligera, 
+exigiría articular y mantener manualmente la gestión de máquinas virtuales, contenedores, almacenamiento, plantillas y versiones del kernel. Por ello, Proxmox VE se elige como entorno de pruebas por reproducibilidad experimental y consistencia operativa, no como requisito indispensable de la arquitectura.
+
+\section{Marco teórico de viabilidad de sistemas multi-GPU heterogéneos} \label{sec:marco_viabilidad} \label{sec:fundamentos}
+
+Hasta aquí se han introducido los componentes técnicos aislados. En esta sección se propone un marco teórico unificado que permite decidir \textit{a priori} si un sistema de reaprovechamiento con GPUs de consumo es viable. El marco consta de \textbf{cinco filtros secuenciales}:
+\begin{equation}
+V = F_{\text{driver}} \land F_{\text{aislamiento}} \land F_{\text{carga}} \land F_{\text{coste}} \land F_{\text{estabilidad}}
+\end{equation}
+Basta con que uno falle para que el despliegue no compense. Los cuatro primeros fueron identificados a partir del planteamiento inicial del problema (capítulos 1--3); el quinto, $F_{\text{estabilidad}}$, se incorpora a partir de la evidencia empírica recogida durante la experimentación (capítulo~5 y apéndice~\ref{ape:causas-raiz}, donde se consolidan las causas raíz de cada modo de fallo), y resulta ser, como se argumentará, el filtro determinante en el caso de estudio.
+
+\subsection{Leyes de escalado: Amdahl y Gustafson}
+
+Toda carga paralelizable se rige por la ley de Amdahl \cite{amdahl1967}. Si $p$ es 
+la fracción paralelizable del tiempo y $1-p$ la fracción secuencial, el \textit{speedup} máximo con 
+$n$ recursos es
+\begin{equation}
+S(n) = \frac{1}{(1-p) + p/n}
+\end{equation}
+incluso con $n \to \infty$, $S_{\max} = 1/(1-p)$. En un sistema multi-GPU, $1-p$ no hace exclusivamente
+referencia a la parte del código no paralelizable, sino que también incluye las transferencias 
+Host$\leftrightarrow$Device y los tiempos de sincronización. 
+Gustafson \cite{gustafson1988} matiza que al escalar el tamaño del problema $p$ crece, por lo que 
+cargas grandes amortizan mejor la heterogeneidad: una conclusión directamente aplicable al capítulo
+5, donde \texttt{matrixMul} con matrices pequeñas oculta el coste PCIe que aparecería con matrices
+de varios GB.
+
+\subsection{Modelo Roofline: compute-bound vs. transfer-bound} \label{sec:roofline}
+
+El modelo Roofline \cite{williams2009roofline} clasifica cada kernel según su intensidad aritmética $I = \text{FLOPs}/\text{bytes}$. El rendimiento alcanzable es
+\begin{equation}
+\text{Rendimiento} = \min(\text{Pico FLOPs},\; I \times \text{Ancho de banda})
+\end{equation}
+Gráficamente, el kernel queda bajo el ``techo'' de cómputo si es \textit{compute-bound} ($I$ alta) o bajo el techo de memoria/PCIe si es \textit{transfer-bound} ($I$ baja). Esta distinción es el criterio teórico central de este trabajo:
+\begin{itemize}
+    \item \textbf{Compute-bound} (ej. \texttt{matrixMul} del capítulo 5): $I$ alta, el bus PCIe apenas interviene tras la carga inicial. La heterogeneidad de \textit{lanes} es irrelevante, como confirma experimentalmente la ausencia de contención bajo ejecución concurrente (155.26 GFlop/s en solitario vs. $\sim$155.3 bajo concurrencia).
+    \item \textbf{Transfer-bound} (ej. \textit{streaming}, inferencia con \textit{batches} grandes, copias frecuentes, sincronización de gradientes en entrenamiento distribuido): $I$ baja, el tiempo $T_{\text{transfer}} = \text{Bytes}/BW_{\text{PCIe}}$ domina. Aquí el número de \textit{lanes} decide la viabilidad.
+\end{itemize}
+\textbf{La aportación del trabajo es demostrar que el mismo hardware puede ser viable para el primer perfil e inviable para el segundo, sin cambiar una sola línea de código.} Esta distinción es, además, el criterio que permite responder de forma rigurosa a la pregunta de si el sistema es apto para cargas de \textit{Machine Learning}: dado que el entrenamiento y, en menor medida, la inferencia por \textit{batches} de modelos de ML son perfiles predominantemente \textit{transfer-bound} (sincronización de gradientes, \textit{streaming} de datos, comunicación entre dispositivos), el propio modelo Roofline aquí desarrollado \textbf{predice su inviabilidad en la plataforma de consumo empleada}, independientemente de la capacidad de cómputo bruto disponible.
+
+\subsection{Interconexión PCIe: \textit{lanes}, generaciones y topología consumo vs. servidor} \label{sec:pcie_lanes}
+
+PCI Express es un bus serie punto a punto. El ancho de banda efectivo depende de dos factores: generación y número de \textit{lanes} \cite{pcisig2022,pci_express_wiki}.
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{|c|c|c|c|c|}
+\hline
+\textbf{Generación} & \textbf{x1} & \textbf{x4} & \textbf{x8} & \textbf{x16} \\
+\hline
+PCIe 2.0 (GT200, 2008) & 0.5 GB/s & 2.0 GB/s & 4.0 GB/s & 8.0 GB/s \\
+\hline
+PCIe 4.0 (X670E chipset) & 2.0 GB/s & 8.0 GB/s & 16 GB/s & 32 GB/s \\
+\hline
+PCIe 5.0 (Ryzen 7000) & 4.0 GB/s & 16 GB/s & 32 GB/s & 64 GB/s \\
+\hline
+\end{tabular}
+\caption{Ancho de banda teórico por dirección, por generación y número de lanes. Valores sin codificación 128b/130b y sin overhead de protocolo. El throughput real es $\sim$75--80\% del teórico.}
+\label{tab:pcie_bw}
+\end{table}
+
+\textbf{Plataforma de consumo (caso de estudio).} El Ryzen 9 7950X expone 28 \textit{lanes} PCIe distribuidas de forma heterogénea, no todas de la misma generación \cite{amd7950x}: 16 \textit{lanes} PCIe 5.0 dedicadas a slots gráficos (configurables como x16 o x8/x8), 4 \textit{lanes} PCIe 5.0 dedicadas al NVMe primario conectado directamente a CPU, y 8 \textit{lanes} PCIe 4.0 adicionales (4 para NVMe secundario, 4 de \textit{uplink} al chipset). La placa ASUS TUF GAMING X670E-PLUS WIFI \cite{asusx670e} implementa: 1$\times$ PCIe 5.0 x16 (CPU, directo), 1$\times$ PCIe 4.0 x16 físico pero eléctrico x4 vía chipset, y 1$\times$ PCIe 4.0 x1 vía chipset.
+
+Ambas GPUs GT200 son PCIe 2.0 x16 nativas, pero la segunda (GTS 250) operó bajo una \textbf{doble restricción} al funcionar vía chipset: de \textbf{ancho} (x4 físico en vez de x16 nativo) y de \textbf{velocidad de enlace}, fijada manualmente a 2.5GT/s (PCIe Gen1) durante todas las pruebas, en lugar de los 5GT/s (Gen2) que el propio chipset soportaría. Por tanto, los 2.5GT/s observados reflejan ante todo la configuración experimental impuesta, no una negociación espontánea; los problemas de \textit{reset} o de estabilidad del enlace siguen siendo relevantes, pero no pueden inferirse únicamente a partir de esa velocidad.
+
+El ancho de banda medido experimentalmente para la GTS 250 (Host$\rightarrow$Device: 778.0 MB/s) es consistente con el teórico de esa configuración impuesta (x4 a 2.5GT/s $\approx$ 800 MB/s tras \textit{overhead} de protocolo), \textbf{no} con una simple reducción proporcional de \textit{lanes} respecto a un enlace x16 nativo Gen2 (que predeciría un teórico $\sim$4$\times$ mayor). El ratio empírico observado entre ambas tarjetas (Host$\rightarrow$Device 1603.3 vs. 778.0 MB/s, $\approx$2.06$\times$) responde, por tanto, a que \textbf{cada tarjeta está limitada por un cuello de botella distinto}: la GTS 250 por el enlace PCIe degradado, y la Tesla C1060 por el motor DMA interno de la propia GPU ---su enlace x16 Gen2 nativo ofrece 8 GB/s teóricos, muy por encima de los 1603 MB/s medidos, por lo que el enlace en sí no es su factor limitante---.
+
+\textbf{Plataforma de servidor.} Un EPYC Genoa o Xeon Sapphire Rapids expone 64--128 \textit{lanes} PCIe 5.0 directas a CPU sin pasar por chipset, con bifurcación completa (p. ej., 8$\times$ x16), \textit{switches} PLX opcionales, ECC y soporte CXL. Cada GPU dispone de su x16 dedicado sin contención del \textit{uplink}. La diferencia no es solo cuantitativa: en servidor, $BW_{\text{PCIe}}$ es un parámetro de diseño; en consumo, es una restricción compartida.
+
+\textbf{Gestión de energía del enlace.} PCIe permite además que un enlace adopte estados de bajo consumo cuando los dispositivos extremos no los utilizan, mecanismo denominado \textit{Active-State Power Management} (ASPM) y gobernado en el kernel por las políticas \texttt{default}, \texttt{powersave} y \texttt{performance} \cite{redhat_aspm,kernel_pci_pm}. El precio de esta gestión es una latencia añadida en cada transición entre estados del enlace, un factor a tener presente al interpretar los procesos de \textit{link retraining} observados en el capítulo 5.
+
+\textbf{Modelo de impacto.} Para una carga con volumen $B$ bytes a transferir:
+\begin{equation}
+T_{\text{total}} = T_{\text{compute}} + \frac{B}{BW_{\text{PCIe}}(gen, lanes) \cdot \eta \cdot \gamma}
+\end{equation}
+donde $\eta \approx 0.75$ es la eficiencia del protocolo y $\gamma \geq 1$ el factor de contención del chipset. Si $T_{\text{compute}} \gg T_{\text{transfer}}$, las \textit{lanes} son irrelevantes (caso \texttt{matrixMul} de este trabajo). Si $T_{\text{transfer}} \gtrsim T_{\text{compute}}$, la plataforma de consumo deja de compensar. La verificación empírica recomendada es \texttt{lspci -vv | grep -E "LnkCap|LnkSta"} y \texttt{nvidia-smi -q -d PCIE} para reportar \texttt{LnkSta: Speed 5GT/s Width x4} real.
+
+\subsection{Modelo de coste: obsolescencia y mantenimiento}
+
+Incluso con $F_{\text{driver}}$, $F_{\text{aislamiento}}$ y $F_{\text{carga}}$ favorables, la viabilidad exige
+\begin{equation}
+\text{Ganancia} = (S_{\text{real}} \cdot V_{\text{hora}}) - (C_{\text{kWh}} \cdot h + C_{\text{ing}} \cdot h_{\text{setup}} + C_{\text{riesgo}}) > 0
+\end{equation}
+donde $C_{\text{riesgo}}$ captura la dependencia de parches comunitarios \cite{michelboucey,dkosmari,dkms}. El capítulo 3 demuestra que el coste dominante no es el hardware (coste $\approx$0 por reaprovechamiento) sino $h_{\text{setup}}$: 15 incidencias documentadas por 7 años de \textit{drift} de API kernel 3.x$\rightarrow$6.14, \textit{toolchain} gcc y \texttt{conftest}. Sin la comunidad que mantiene los 21 parches incrementales hasta kernel 7.0, $C_{\text{riesgo}} \to \infty$ y el sistema es inviable aunque el hardware funcione. Este es el criterio que distingue un despliegue puntual de un despliegue sostenible.
+
+\subsection{Filtro de estabilidad: fallo contenido vs. fallo propagado}
+\label{sec:estabilidad}
+
+Los cuatro filtros anteriores comparten una asunción implícita: que, superados los obstáculos de compatibilidad de \textit{software} y de rendimiento, el hardware se comporta de forma determinista y su fallo, si ocurre, queda contenido al propio dispositivo. La experimentación de este trabajo (capítulo~5 y la tabla consolidada de causas raíz del apéndice~\ref{ape:causas-raiz}) demuestra que esta asunción no siempre se sostiene, y motiva la incorporación de un quinto filtro:
+\begin{equation}
+\begin{split}
+F_{\text{estabilidad}} = \text{cierto} \iff \;& \forall\, \text{fallo observable en el dispositivo},\\[-2pt]
+& T_{\text{recuperación}}(\text{fallo}) < \infty \; \text{sin intervención física}
+\end{split}
+\end{equation}
+De forma operacional, y apoyándose en los mecanismos de recuperación de dispositivos PCIe disponibles en el kernel Linux \cite{kernel_vfio}:
+\begin{equation}
+\begin{split}
+F_{\text{estabilidad}} = \text{cierto} \iff \;& (\texttt{flr} \in \texttt{reset\_method})\\
+& \lor\; (\exists\, \text{recurso de energía ACPI a nivel de slot})
+\end{split}
+\end{equation}
+Es decir: un dispositivo es recuperable por \textit{software} ante un fallo de enlace o de contexto si soporta \textit{Function Level Reset} real, \textbf{o} si la plataforma expone un mecanismo alternativo de corte/restauración de alimentación a nivel de \textit{slot} (\textit{hotplug} de energía), que permita un \textit{power-cycle} dirigido sin intervención física sobre el hardware.
+
+Conviene subrayar que los mecanismos de \emph{detección} del kernel no son mecanismos de \emph{recuperación}: los \textit{watchdogs} de \textit{softlockup} y \textit{hardlockup} se limitan a registrar el diagnóstico y, si se les configura así, a provocar el reinicio del sistema \cite{kernel_lockup_watchdog}. Por tanto, un fallo de este tipo nunca puede considerarse contenido al dispositivo, sino que exige la intervención del operador.
+
+\textbf{Verificación empírica en el caso de estudio.} Ambas condiciones se evaluaron como falsas:
+\begin{Verbatim}[fontsize=\small]
+$ cat /sys/bus/pci/devices/0000:08:00.0/reset_method
+pm bus
+\end{Verbatim}
+\begin{Verbatim}[fontsize=\small]
+$ ls /sys/bus/pci/slots/
+(vacío)
+\end{Verbatim}
+Por tanto, $F_{\text{estabilidad}} = \text{falso}$ para el despliegue con paso directo de dispositivo (VFIO) sobre esta plataforma, \textbf{con independencia de que los restantes cuatro filtros pudieran ser favorables}. Esto explica, con mayor precisión formal que la disponible en la fase inicial del trabajo (capítulo 2), por qué el enfoque VFIO resultó inviable: no por un único factor aislado (bug de FLR o ausencia de GOP), sino porque ninguno de los dos mecanismos de recuperación por \textit{software} contemplados en $F_{\text{estabilidad}}$ está presente en la combinación hardware-plataforma del caso de estudio.
+
+\textbf{Coste asociado a $F_{\text{estabilidad}}$ falso.} Cuando el filtro de estabilidad falla, el coste de riesgo de la ecuación anterior no es simplemente alto, sino potencialmente \textbf{no acotado}, si el fallo no queda contenido al dispositivo:
+\begin{equation}
+C_{\text{riesgo}} \to \infty \iff F_{\text{estabilidad}} = \text{falso} \;\land\; \text{el fallo se propaga fuera del dispositivo asignado}
+\end{equation}
+Esta segunda condición ---la propagación del fallo más allá del dispositivo objetivo--- 
+se observó empíricamente durante la experimentación posterior a la validación inicial: un intento 
+de \textit{passthrough} con la Tesla C1060 derivó en un \textit{reset} de bus a nivel de puerto PCIe padre que, 
+si bien se completó formalmente (``\texttt{reset done}''), coincidió temporalmente con una corrupción del sistema
+de ficheros raíz del host y una posterior pérdida de detección del disco de arranque por parte de la propia BIOS, 
+cuya única resolución observada fue la retirada física de ambas GPUs y un corte completo de alimentación. Este incidente, 
+descrito en detalle en el apéndice correspondiente, constituye la evidencia empírica más severa de $F_{\text{estabilidad}} 
+= \text{falso}$ obtenida en el trabajo, y motiva que este filtro se considere, para el caso de estudio, 
+el factor determinante de la inviabilidad del enfoque VFIO ---por encima de las consideraciones de GOP o 
+de rendimiento bruto---.
+
+\subsection{Aplicación predictiva del marco: expansión a cuatro GPUs}
+
+Con posterioridad a la fase de experimentación principal, se dispuso de dos unidades adicionales de GPU para una posible expansión del sistema a cuatro tarjetas, empleando \textit{risers} PCIe para sortear las limitaciones físicas de espacio y de número de \textit{slots} de la placa base. Antes de proceder a una implementación física, se aplicó el marco teórico desarrollado en esta sección de forma predictiva:
+\begin{itemize}
+    \item \textbf{$F_{\text{estabilidad}}$}, ya determinado como falso para las dos GPUs del caso de estudio en \textit{slots} nativos de la placa base, se ve adicionalmente comprometido por la introducción de un \textit{riser} PCIe como capa intermedia de conexión. Una prueba exploratoria con una única Tesla C1060 conectada a través de un \textit{riser} reprodujo el mismo patrón de fallo de \textit{link retraining} ya documentado (\texttt{broken device, retraining non-functional downstream link at 2.5GT/s}), sin que fuera posible aislar si la causa era el propio \textit{riser}, el estado eléctrico remanente de la tarjeta tras el incidente crítico previo, o ambos factores combinados.
+    \item La \textbf{bifurcación de \textit{lanes} PCIe} (necesaria para repartir un único \textit{slot} x16 entre varias GPUs mediante \textit{splitters} activos) requiere soporte explícito de CPU y BIOS, disponible en la plataforma de consumo empleada únicamente en el \textit{slot} x16 conectado directamente a CPU. El \textit{slot} secundario (x4 eléctrico vía chipset) y la conexión mediante \textit{riser} a un \textit{slot} M.2 no ofrecen esta capacidad, lo que limita per se las topologías de expansión viables sin cambiar de placa base.
+    \item El \textbf{coste de \textit{setup}} ($h_{\text{setup}}$ en la ecuación anterior), ya identificado como el componente dominante del coste total en el capítulo 3, se duplicaría aproximadamente al incorporar dos GPUs adicionales (parcheo, validación de DKMS, pruebas de estabilidad), sin que ninguno de los factores anteriores sugiera una mejora de $F_{\text{estabilidad}}$ que lo compense.
+\end{itemize}
+\textbf{Decisión.} Con $F_{\text{estabilidad}}$ prediciéndose desfavorable de forma consistente con la evidencia ya recogida, y ante el riesgo demostrado de propagación de fallos al host completo, se decidió no proceder con la implementación física de la expansión a cuatro GPUs, priorizando la integridad del sistema. Esta decisión se documenta como \textbf{validación prospectiva de la capacidad predictiva del marco teórico propuesto}: la ausencia de implementación no responde a una limitación de tiempo o de alcance del trabajo, sino a la aplicación consecuente de sus propias conclusiones metodológicas.
+
+Este modelo se concretará para el caso de estudio en el capítulo~\ref{cap1}.
+
+% Restaurar numeración para capítulos numerados (Capítulo 1 = capitulo1)
+\renewcommand{\thesection}{\thechapter.\arabic{section}}
+\renewcommand{\thesubsection}{\thesection.\arabic{subsection}}
+\renewcommand{\thesubsubsection}{\thesubsection.\arabic{subsubsection}}
+\renewcommand{\thetable}{\thechapter.\arabic{table}}
+\renewcommand{\thefigure}{\thechapter.\arabic{figure}}
+\renewcommand{\theequation}{\thechapter.\arabic{equation}}
+

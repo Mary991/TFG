@@ -1,0 +1,34 @@
+% Fuente de la figura estática fig:arquitectura.
+% Compilar este archivo localmente para regenerar arquitectura-sistema.pdf.
+\documentclass[tikz,border=5pt]{standalone}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[spanish]{babel}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usetikzlibrary{positioning,arrows.meta,shapes.geometric,fit}
+
+\begin{document}
+\begin{tikzpicture}[
+  gpu/.style={draw, thick, rounded corners, fill=black!5, minimum height=1.4cm, minimum width=3.2cm, align=center, font=\small},
+  mod/.style={draw, thick, rounded corners, minimum height=1.4cm, minimum width=3.4cm, align=center, font=\small},
+  dev/.style={draw, thick, rounded corners, minimum height=1.6cm, minimum width=3.6cm, align=left, font=\footnotesize\ttfamily}
+]
+% GPUs superiores
+\node[gpu] (g1) {NVIDIA\\Tesla C1060};
+\node[gpu, right=1.8cm of g1] (g2) {ASUS\\ENGTS250};
+% Driver y device nodes
+\node[mod, below=1.4cm of g1, xshift=2.5cm] (mod) {Driver 340.108\\módulo de kernel\\+ DKMS};
+\node[dev, right=1.2cm of mod] (dev) {/dev/nvidia0\\/dev/nvidia1\\/dev/nvidiactl};
+% Caja del host que engloba todo
+\node[draw, thick, rounded corners, fit=(g1) (g2) (mod) (dev), inner sep=14pt, label={[anchor=north west, font=\bfseries]north west:Host Proxmox VE 9}] (host) {};
+% Flechas
+\draw[thick, -{Latex}] (g1.south) -- (mod.north);
+\draw[thick, -{Latex}] (g2.south) -- (mod.north);
+\draw[thick, -{Latex}] (mod.east) -- (dev.west);
+% Contenedor LXC
+\node[draw, thick, rounded corners, minimum width=11cm, minimum height=1.7cm, below=1.4cm of host, align=center, font=\small] (ct) {\textbf{Contenedor LXC 200 (\texttt{gpu-tfg})}\\Stack userspace 340.108 + CUDA 6.5\\ \texttt{nvidia-smi, nvcc, deviceQuery}};
+\draw[thick, -{Latex}] (host.south) -- node[right, font=\small] {bind mounts \texttt{lxc.mount.entry}} (ct.north);
+\end{tikzpicture}
+\end{document}

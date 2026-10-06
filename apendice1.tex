@@ -1,0 +1,54 @@
+\chapter{Procedimiento reproducible} \label{ape:host} \label{ape:contenedor-cuda}
+
+Este apéndice resume, sin la traza de errores documentada en los capítulos~\ref{cap3} y~\ref{cap4}, los pasos necesarios para reproducir el sistema final. Se presenta como una secuencia de pasos de alto nivel; las órdenes exactas y los scripts de automatización se proporcionan como material complementario de esta memoria (sección~\ref{sec:material-complementario}).
+
+\section{Línea base del firmware y modo de arranque}
+
+La instalación presupone la siguiente configuración firmware del host:
+
+\begin{itemize}
+    \item CSM con soporte para \textit{Legacy OpROM}: activado, para permitir el arranque con las VBIOS sin GOP de las GT200.
+    \item Topología PCIe configurada para mantener operativas ambas ranuras gráficas.
+    \item \textit{Above 4G Decoding}: activado, para ampliar el espacio MMIO y direccionar simultáneamente la VRAM de ambas GPUs.
+    \item Enlace de la ranura secundaria fijado a PCIe Gen~1 (2.5~GT/s) durante todas las pruebas.
+\end{itemize}
+
+Los ajustes empleados únicamente durante los experimentos VFIO se documentan en el capítulo~\ref{cap2} y no forman parte de esta línea base. Todo el procedimiento debe realizarse con el host arrancado en modo LXC, que es el modo por defecto; su comprobación se describe en el apéndice~\ref{ape:manual-uso}.
+
+\section{Instalación del driver en el host}
+
+\begin{enumerate}
+    \item Revertir cualquier configuración VFIO previa que reserve las GPUs para \texttt{vfio-pci} y desactivar el driver libre \textit{nouveau}.
+    \item Instalar el kernel \texttt{6.14.11-6-bpo12-pve} junto con sus \textit{headers} (paquete \texttt{proxmox-headers}) y fijarlo como kernel de arranque.
+    \item Instalar las dependencias de compilación (\texttt{build-essential}, \texttt{dkms} y gcc 12) y fijar gcc 12 como compilador por defecto del sistema.
+    \item Descargar el driver oficial 340.108 y extraer su código fuente.
+    \item Aplicar, desde el directorio padre de \texttt{kernel/}, los parches del repositorio \texttt{MichelBoucey/nvidia-340xx} correspondientes al kernel 6.14.
+    \item Sustituir la opción \texttt{-Wunused-but-set-variable=3} por \texttt{-Wunused-but-set-variable} en los ficheros \texttt{conftest.sh}, \texttt{uvm/conftest.sh} y \texttt{nvidia-modules-common.mk}.
+    \item Copiar el código fuente parcheado a \texttt{/usr/src/nvidia-340.108} y añadir \texttt{IGNORE\_CC\_MISMATCH=1} a la orden de compilación del fichero \texttt{dkms.conf}.
+    \item Registrar, compilar e instalar el módulo con DKMS, y cargarlo.
+    \item Instalar los componentes de espacio de usuario con el instalador oficial sin recompilar el módulo, omitiendo las librerías de 32 bits y la configuración de X11.
+    \item Verificar con \texttt{nvidia-smi} que ambas GPUs son detectadas.
+\end{enumerate}
+
+\section{Contenedor LXC y CUDA 6.5}
+
+\begin{enumerate}
+    \item Descargar una plantilla de Debian 12 y crear un contenedor privilegiado con la opción \textit{nesting} activada.
+    \item Configurar el paso de dispositivos en el fichero de configuración del contenedor: permitir los dispositivos de carácter con número mayor 195 y montar \texttt{/dev/nvidia0}, \texttt{/dev/nvidia1} y \texttt{/dev/nvidiactl}.
+    \item Dentro del contenedor, instalar los componentes de espacio de usuario del driver 340.108, en la misma versión que el host y sin módulo de kernel.
+    \item Instalar CUDA Toolkit 6.5 mediante extracción manual por capas: extraer los subinstaladores del meta-instalador, extraer el toolkit y ejecutar su instalador Perl indicando la ruta de sus módulos, y extraer y copiar manualmente los ejemplos (\textit{samples}).
+    \item Añadir los directorios \texttt{bin} y \texttt{lib64} de \texttt{/usr/local/cuda-6.5} a las variables \texttt{PATH} y \texttt{LD\_LIBRARY\_PATH}.
+    \item Validar el cómputo con \texttt{deviceQuery}.
+    \item Para compilar programas nuevos, crear un entorno \textit{chroot} con Debian 8 (Jessie) y gcc 4.9 a partir de \texttt{archive.debian.org}, con el toolkit y los ejemplos montados en su interior. Los binarios generados se ejecutan en el contenedor principal.
+\end{enumerate}
+
+\section{Material complementario} \label{sec:material-complementario}
+
+% TODO: añadir la URL del repositorio cuando esté disponible.
+Se proporcionan como material complementario de esta memoria:
+
+\begin{itemize}
+    \item El script \texttt{instalar-nvidia-340xx-dkms.sh}, que automatiza la instalación del driver en el host de forma idempotente: verifica los prerrequisitos (kernel fijado, \textit{headers} instalados y gcc 12 disponible), descarga el driver oficial y los parches si no existen localmente, aplica los parches y las correcciones de opciones de compilación conocidas, compila e instala el módulo vía DKMS, instala los componentes de espacio de usuario en modo no interactivo y verifica el resultado con \texttt{nvidia-smi}.
+    \item Las órdenes completas de cada uno de los pasos de este apéndice.
+    \item La salida completa de \texttt{deviceQuery} para ambas GPUs.
+\end{itemize}

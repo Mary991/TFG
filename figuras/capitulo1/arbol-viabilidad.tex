@@ -1,0 +1,44 @@
+% Fuente de la figura estática fig:arbol_viabilidad.
+% Compilar este archivo localmente para regenerar arbol-viabilidad.pdf.
+\documentclass[tikz,border=5pt]{standalone}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[spanish]{babel}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usetikzlibrary{positioning,arrows.meta,shapes.geometric,fit}
+
+\begin{document}
+\begin{tikzpicture}[
+  node distance=0.45cm,
+  decision/.style={diamond, draw, thick, fill=blue!10, aspect=1.7, text width=3.0cm, align=center, font=\small},
+  outcome_ok/.style={rectangle, draw, thick, rounded corners, fill=green!15, text width=3.2cm, align=center, font=\small},
+  outcome_ko/.style={rectangle, draw, thick, rounded corners, fill=red!15, text width=3.2cm, align=center, font=\small},
+  arrow/.style={thick, -{Latex}}
+]
+\node[decision] (f1) {$F_{\text{driver}}$\\¿Misma rama legacy?\\\footnotesize 340.xx para GT200};
+\node[decision, below=of f1] (f2) {$F_{\text{aislamiento}}$\\¿VFIO con FLR OK\\o LXC posible?};
+\node[decision, below=of f2] (f3) {$F_{\text{carga}}$\\¿Compute-bound?\\ \footnotesize Roofline $I$ alta};
+\node[decision, below=of f3] (f4) {$F_{\text{coste}}$\\¿Parches activos +\\$Ganancia>0$?};
+\node[decision, below=of f4] (f5) {$F_{\text{estabilidad}}$\\¿Contención del fallo\\por \textit{software}?};
+
+\node[outcome_ko, right=1.2cm of f1] (ko1) {\textbf{NO viable}\\Drivers incompatibles\\Solo VFIO si FLR OK};
+\node[outcome_ko, right=1.2cm of f2] (ko2) {\textbf{NO viable}\\FLR bug + VBIOS sin UEFI\\(cap. 2)};
+\node[outcome_ko, right=1.2cm of f3] (ko3) {\textbf{NO compensa}\\Transfer-bound\\PCIe x4 estrangula};
+\node[outcome_ok, below=of f5] (ok) {\textbf{VIABLE}\\LXC + DKMS\\Compute-bound sin contención};
+\node[outcome_ko, right=1.2cm of f4] (ko4) {\textbf{NO sostenible}\\Sin comunidad /\\$h_{\text{setup}}$ excesivo};
+\node[outcome_ko, right=1.2cm of f5] (ko5) {\textbf{NO viable}\\Sin FLR ni GOP\\VFIO inviable\\(cap. 5)};
+
+\draw[arrow] (f1) -- node[right, font=\footnotesize] {sí} (f2);
+\draw[arrow] (f1.east) -- (ko1.west) node[midway, above, font=\footnotesize] {no};
+\draw[arrow] (f2) -- node[right, font=\footnotesize] {sí} (f3);
+\draw[arrow] (f2.east) -- (ko2.west) node[midway, above, font=\footnotesize] {no};
+\draw[arrow] (f3) -- node[right, font=\footnotesize] {sí} (f4);
+\draw[arrow] (f3.east) -- (ko3.west) node[midway, above, font=\footnotesize] {no};
+\draw[arrow] (f4) -- node[right, font=\footnotesize] {sí} (f5);
+\draw[arrow] (f4.east) -- (ko4.west) node[midway, above, font=\footnotesize] {no};
+\draw[arrow] (f5) -- node[right, font=\footnotesize] {sí} (ok);
+\draw[arrow] (f5.east) -- (ko5.west) node[midway, above, font=\footnotesize] {no};
+\end{tikzpicture}
+\end{document}

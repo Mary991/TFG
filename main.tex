@@ -1,0 +1,185 @@
+% !TeX program = latexmk
+% !TeX encoding = UTF-8
+\documentclass[a4paper,12pt,oneside]{book}
+
+%%  Paquetería necesaria
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\usepackage{cmap}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[spanish]{babel}
+\usepackage{graphicx}
+\usepackage{xcolor} % necesario para expresiones como gray!5 en los listados
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{fvextra}
+\DefineVerbatimEnvironment{Verbatim}{Verbatim}{breaklines,breakanywhere,fontsize=\small,xleftmargin=4pt}
+\usepackage{listings}
+\usepackage{caption}
+\usepackage{setspace}
+\onehalfspacing % Para interlineado de 1.5
+
+% Márgenes equilibrados para evitar overflow de tablas anchas
+\usepackage[a4paper,left=2.5cm,right=2.5cm,top=2.5cm,bottom=2.5cm]{geometry}
+\usepackage{microtype} % mejora justificación y reduce overfull \hbox
+\usepackage[htt]{hyphenat} % permite puntos de corte dentro de \texttt (rutas, nombres de repositorio)
+\usepackage{booktabs} % líneas profesionales para tablas
+\usepackage{array} % columnas con ancho controlado
+\usepackage{tabularx} % tablas que se ajustan al ancho de texto
+\usepackage{float} % opción [H]: fija una tabla/figura exactamente donde se escribe
+% Columna de ancho fijo alineada a la izquierda (evita huecos y avisos Underfull en celdas estrechas)
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+
+% Las dos figuras vectoriales se incluyen ya precompiladas como PDF.
+% Sus fuentes TikZ estan en figuras/capitulo1 y figuras/capitulo4.
+
+% hyperref SIEMPRE al final del preámbulo
+\usepackage{hyperref}
+
+%%  Configuración de paquetes
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%\renewcommand\lstlistingname{Listado}                   %  default is Listing
+%\renewcommand\lstlistlistingname{\'Indice de listados}  %  default is Listings
+% \renewcommand\thelstlisting{\arabic{lstlisting}}        % captionstyle
+
+%%%% Para colorear el texto durante la revisión
+\usepackage{url} %gestionar url
+\usepackage{xurl} % permite cortar URLs largas en cualquier punto (bibliografía)
+\newcommand{\blue}[1]{{\color{blue} #1}}
+\newcommand{\gray}[1]{{\color{gray} #1}}
+\newcommand{\red}[1]{{\color{red} #1}}
+\newcommand{\orange}[1]{{\color{orange} #1}}
+
+\lstset{frame=Ltb,
+framerule=0pt,
+aboveskip=0.4cm,
+belowskip=0.2cm,
+framextopmargin=3pt,
+framexbottommargin=3pt,
+framexleftmargin=0.4cm,
+framesep=0pt,
+rulesep=.4pt,
+backgroundcolor= \color{white},
+rulesepcolor= \color{black},
+numbers=left,
+numbersep=10pt,
+numberstyle=\tiny,
+numberfirstline = false,
+breaklines=true,
+breakatwhitespace=false,
+columns=flexible,
+keepspaces=true,
+}
+
+\lstdefinestyle{C}
+{language=C,
+}
+
+\lstdefinestyle{bash}{
+basicstyle=\small\ttfamily,
+backgroundcolor=\color{gray!5},
+frame=single,
+framerule=0.3pt,
+rulesepcolor=\color{black!30},
+framesep=5pt,
+numbers=none,
+breaklines=true,
+keepspaces=true,
+showstringspaces=false,
+aboveskip=0.5cm,
+belowskip=0.3cm,
+xleftmargin=0.3cm,
+xrightmargin=0.3cm,
+}
+
+%%  Configuraciones varias
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% \newcommand{\corregir}{\color{blue}}   % pintar en color azul
+\setlength{\parskip}{0.8ex plus 0.3ex minus 0.2ex}
+\setlength{\parindent}{0pt}
+% Margen de emergencia: permite espaciar más las líneas en vez de
+% desbordarlas cuando hay tokens técnicos largos e indivisibles.
+\setlength{\emergencystretch}{3em}
+% Cortes de palabras en tokens técnicos concretos del TFG
+\hyphenation{
+  Vir-tu-a-li-za-ción
+  con-ten-ción
+  in-de-pend-ientes
+}
+% Espaciado de floats para evitar desplazamiento en cascada
+\setlength{\textfloatsep}{12pt plus 2pt minus 2pt}
+\setlength{\intextsep}{10pt plus 2pt minus 2pt}
+\setlength{\floatsep}{10pt plus 2pt minus 2pt}
+\captionsetup{font=small,labelfont=bf,margin=10pt}
+
+% Para que no aparezcan las cabeceras de las páginas que están en blanco
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\makeatletter
+\def\cleardoublepage{\clearpage\if@twoside \ifodd\c@page\else
+  \hbox{}
+  \thispagestyle{empty}
+  \newpage
+  \if@twocolumn\hbox{}\newpage\fi\fi\fi}
+\makeatother
+
+%%  Cortes de palabras especiales
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% (las excepciones de corte se definen más arriba, junto a emergencystretch)
+
+\bibliographystyle{spmpsci}
+
+\renewcommand{\labelitemi}{$\bullet$}
+
+% Flujo rápido en Overleaf: descomentar solo la línea del capítulo en edición.
+% Para generar el PDF final completo, esta línea debe permanecer comentada.
+% \includeonly{capitulo3/capitulo3}
+
+\begin{document}
+
+%%  Título e Índices
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\pagenumbering{Roman}
+\include{titulo/titulo}
+\clearpage
+\pagestyle{plain}
+
+%Abstract
+\include{abstract/abstract}
+
+\tableofcontents
+
+\newpage
+
+%%  Contenido del trabajo
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\pagenumbering{arabic}
+\include{introduccion/introduccion}
+\include{preeliminares/preeliminares}
+\include{capitulo1/capitulo1}
+\include{capitulo2/capitulo2}
+\include{capitulo3/capitulo3}
+\include{capitulo4/capitulo4}
+\include{capitulo5/capitulo5}
+\include{conclusiones/conclusiones}
+
+% Apéndices numerados con letras (Apéndice A, B, C)
+\appendix
+% Evitar destinos hyperref duplicados en apéndices (reutilizan números de capítulo)
+\makeatletter
+\renewcommand{\theHchapter}{appendix.\arabic{chapter}}
+\renewcommand{\theHsection}{appendix.\theHchapter.\arabic{section}}
+\renewcommand{\theHsubsection}{appendix.\theHchapter.\arabic{section}.\arabic{subsection}}
+\makeatother
+\include{apendice1} % A: Procedimiento reproducible (host + contenedor/CUDA)
+\include{apendice3} % B: Tabla consolidada de causas raíz
+\include{apendice4} % C: Manual de uso del sistema
+% apendice2.tex (contenedor/CUDA) se ha integrado en apendice1.tex.
+% apendice5.tex (salida de deviceQuery) pasa a material complementario.
+
+%%  Bibliografía
+\cleardoublepage\phantomsection
+\addcontentsline{toc}{chapter}{Referencias}
+\bibliography{bibliografia/ref}
+
+\end{document} 

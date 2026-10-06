@@ -1,0 +1,254 @@
+\chapter{Experimentación y resultados} \label{cap5}
+
+En este capítulo se presenta la experimentación realizada sobre el sistema completo: la comparativa de rendimiento entre ambas GPUs, el experimento de ejecución concurrente, el hallazgo de una condición de carrera en la inicialización del driver y el análisis de las limitaciones del hardware en materia de telemetría energética. Finalmente se discuten los resultados en el marco del objetivo general de viabilidad.
+
+\section{Metodología de evaluación}
+
+Como herramientas de evaluación se utilizaron dos ejemplos del SDK de CUDA 6.5, compilados para las arquitecturas reales del hardware (\texttt{sm\_11} para la GTS 250 y \texttt{sm\_13} para la Tesla C1060):
+
+\begin{itemize}
+    \item \texttt{matrixMul}: multiplicación de matrices, que mide el rendimiento de cómputo puro en GFlop/s.
+    \item \texttt{bandwidthTest}: medida del ancho de banda de memoria para distintos tipos de transferencia (Host $\rightarrow$ Device, Device $\rightarrow$ Host y Device $\rightarrow$ Device).
+\end{itemize}
+
+Ambos benchmarks están disponibles en el SDK de CUDA y son los estándar de facto para este tipo de evaluaciones, lo que facilita la comparación con otros resultados publicados \cite{cuda65_perf_report}.
+
+\section{Obstáculo: incompatibilidad del front-end de \texttt{nvcc} 6.5}
+
+A diferencia de \texttt{deviceQuery} (un \texttt{.cpp} puro, compilado directamente con \texttt{g++} del sistema), \texttt{bandwidthTest} y \texttt{matrixMul} son ficheros \texttt{.cu} que contienen kernels de GPU reales. Estos pasan por el \textbf{front-end de parseo C++ propio de \texttt{nvcc}} (basado en EDG, anterior a C++11), que resultó incompatible con las cabeceras modernas de glibc/libstdc++ del contenedor (Debian 12, gcc 12.2):
+
+\begin{lstlisting}[style=bash]
+error: identifier "nullptr" is undefined
+error: variable "std::constexpr" is not a type name
+error: this declaration may not have extern "C" linkage
+\end{lstlisting}
+
+El diagnóstico confirma que desactivar el \texttt{\#error} de verificación de versión de gcc en \texttt{host\_config.h} (como se hizo para el toolkit en el capítulo 4) solo elimina el aviso explícito; no resuelve la incompatibilidad real del parser de \texttt{nvcc} con \textit{headers} de sistema que ya asumen C++11 de forma incondicional.
+
+La solución fue crear un entorno mínimo de Debian 8 (Jessie, 2015) mediante \texttt{debootstrap}, usado \textbf{únicamente como entorno de compilación} (con gcc 4.9.2), ya que CUDA 6.5 requiere gcc $\leq$ 4.9 para su front-end de compilación. El procedimiento completo (creación del \textit{chroot}, \textit{sources.list} con \texttt{archive.debian.org} \cite{debian_archive}, instalación de \texttt{build-essential} y \textit{bind mounts} del toolkit y los samples) se recoge en el apéndice~\ref{ape:contenedor-cuda}.
+
+La compilación se realizó limitando \texttt{-gencode} únicamente a las arquitecturas reales del hardware disponible, en vez de generar código para las seis o siete arquitecturas que trae el \texttt{Makefile} original por defecto (hasta \texttt{sm\_50}), irrelevantes para este proyecto:
+
+\begin{lstlisting}[style=bash]
+nvcc -ccbin g++ -I../../common/inc -m64 \
+  -gencode arch=compute_11,code=sm_11 \
+  -gencode arch=compute_13,code=sm_13 \
+  -o bandwidthTest.o -c bandwidthTest.cu
+\end{lstlisting}
+
+La compilación fue limpia, sin errores (solo \textit{warnings} de deprecación por usar \texttt{sm\_11}/\texttt{sm\_13}, arquitecturas antiguas pero necesarias para este hardware). El mismo procedimiento se repitió para \texttt{matrixMul}. Una validación relevante es que los binarios compilados en el \textit{chroot} (con glibc/libstdc++ de Jessie) se ejecutaron sin problema alguno en el contenedor principal (Debian 12), lo que confirma que la incompatibilidad estaba limitada al \textit{front-end de compilación} de \texttt{nvcc}, no a la ABI del binario final.
+
+\section{Resultados de rendimiento}
+
+\subsection{Cómputo: \texttt{matrixMul}}
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{|l|c|c|c|}
+\hline
+\textbf{GPU} & \textbf{Rendimiento} & \textbf{Tiempo} & \textbf{Resultado} \\
+\hline
+Tesla C1060 & 155.26 GFlop/s & 0.106 ms & PASS \\
+\hline
+GeForce GTS 250 & 80.49 GFlop/s & 0.204 ms & PASS \\
+\hline
+\end{tabular}
+\caption{Resultados de \texttt{matrixMul}}
+\label{tab:matrixmul}
+\end{table}
+
+\subsection{Ancho de banda: \texttt{bandwidthTest}}
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{|l|c|c|}
+\hline
+\textbf{Transferencia} & \textbf{Tesla C1060} & \textbf{GeForce GTS 250} \\
+\hline
+Host $\rightarrow$ Device & 1603.3 MB/s & 778.0 MB/s \\
+\hline
+Device $\rightarrow$ Host & 1635.6 MB/s & 817.6 MB/s \\
+\hline
+Device $\rightarrow$ Device & 75,661.9 MB/s & 54,603.4 MB/s \\
+\hline
+\end{tabular}
+\caption{Resultados de \texttt{bandwidthTest} (modo Quick, transferencias PINNED)}
+\label{tab:bandwidth}
+\end{table}
+
+\subsection{Comparativa}
+
+La tabla \ref{tab:ratios} resume los cocientes de rendimiento entre ambas tarjetas, junto con los ratios teóricos derivados de sus especificaciones:
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{|l|c|}
+\hline
+\textbf{Métrica} & \textbf{Ratio C1060/GTS250} \\
+\hline
+Cómputo (GFlop/s) & $\sim$1.93$\times$ \\
+\hline
+Bandwidth H$\rightarrow$D & $\sim$2.06$\times$ \\
+\hline
+Bandwidth D$\rightarrow$H & $\sim$2.00$\times$ \\
+\hline
+Bandwidth D$\rightarrow$D & $\sim$1.39$\times$ \\
+\hline
+Núcleos CUDA & 1.875$\times$ (240 vs 128) \\
+\hline
+Memoria & 4$\times$ (4096 MB vs 1024 MB) \\
+\hline
+\end{tabular}
+\caption{Ratios de rendimiento entre la Tesla C1060 y la GTS 250}
+\label{tab:ratios}
+\end{table}
+
+La observación más relevante es que la ventaja de la C1060 en \textit{bandwidth} interno (Device $\rightarrow$ Device) es notablemente menor ($\sim$1.4$\times$) que en el resto de métricas ($\sim$2$\times$), pese a tener el doble de ancho de bus de memoria (512-bit vs 256-bit). Entre las posibles causas se encuentran las diferencias de frecuencia de memoria (800 MHz en la C1060 vs 1000 MHz en la GTS 250, que parcialmente compensa el bus más estrecho) y las limitaciones de la propia implementación del benchmark en modo \textit{Quick}. Es un resultado que muestra cómo la heterogeneidad de las tarjetas no siempre se traduce en ratios predecibles a partir de las especificaciones.
+
+\section{Experimento de contención: ejecución concurrente}
+
+Para evaluar si compartir contenedor y bus PCIe introduce contención de recursos, se lanzaron ambos benchmarks como procesos en \textit{background} simultáneos (\texttt{matrixMul --device=0} y \texttt{--device=1}).
+
+\textbf{Rendimiento bajo concurrencia} (idéntico al rendimiento en solitario, sin degradación):
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{|l|c|c|}
+\hline
+\textbf{GPU} & \textbf{En solitario} & \textbf{Bajo concurrencia} \\
+\hline
+Tesla C1060 & 155.26 GFlop/s & $\sim$155.2--155.3 GFlop/s \\
+\hline
+GTS 250 & 80.49 GFlop/s & $\sim$81.3 GFlop/s \\
+\hline
+\end{tabular}
+\caption{Rendimiento de \texttt{matrixMul} en solitario y bajo ejecución concurrente}
+\label{tab:contention}
+\end{table}
+
+No se observa contención de rendimiento relevante entre ambas GPUs al ejecutar cargas concurrentes: cada una dispone de su propio canal PCIe independiente y no compiten por ancho de banda de forma apreciable a esta escala de carga. Este resultado es importante para el objetivo del trabajo, ya que indica que el aprovechamiento conjunto de las tarjetas es real y no degrada el rendimiento individual.
+
+\section{Hallazgo secundario: condición de carrera en la inicialización} \label{sec:race}
+
+En el primer intento de ejecución concurrente (lanzamiento simultáneo sin espera entre procesos), el proceso de la GPU 1 falló. En la primera reproducción del experimento el error fue:
+
+\begin{lstlisting}[style=bash]
+cudaGetDevice returned error code 38, line(396)
+cudaGetDeviceProperties returned error code 38, line(409)
+cudaMalloc d_A returned error code 38, line(164)
+\end{lstlisting}
+
+(código 38 = \texttt{cudaErrorNoDevice} \cite{nvidia_cuda_programming}). En una reproducción posterior del mismo escenario (primer lanzamiento concurrente tras un reinicio limpio), el código observado fue distinto:
+
+\begin{lstlisting}[style=bash]
+cudaGetDevice returned error code 10, line(396)
+cudaGetDeviceProperties returned error code 10, line(409)
+cudaMalloc d_A returned error code 10, line(164)
+\end{lstlisting}
+
+(código 10 = \texttt{cudaErrorInvalidDevice}). En ambos casos la GPU 0 completó correctamente. Que el código de error varíe entre reproducciones del mismo escenario (en vez de fallar siempre exactamente igual) es un indicio de que se trata de una condición de carrera genuina en la enumeración/registro interno de dispositivos del driver, y no de un fallo determinista con una única causa fija. El log del kernel (\texttt{dmesg}) mostró, en el momento del fallo:
+
+\begin{lstlisting}[style=bash]
+WARNING: Flushing system-wide workqueues will be prohibited in near future.
+os_flush_work_queue+0x4a/0x70 [nvidia]
+rm_disable_adapter+0x7b/0x110 [nvidia]
+nvidia_close+0x461/0x4d0 [nvidia]
+\end{lstlisting}
+
+El diagnóstico es el siguiente: el driver 340.108, al cerrar el contexto de una GPU (\texttt{nvidia\_close}), vacía la \textbf{cola de trabajo global del sistema} en lugar de una cola específica del dispositivo, una práctica ya señalada como obsoleta por el kernel moderno. Si el cierre de un proceso coincide con la inicialización concurrente de otro proceso en la segunda GPU, ese \textit{flush} global puede interferir con la inicialización en curso.
+
+Se caracterizó empíricamente la reproducibilidad del fallo:
+
+\begin{itemize}
+    \item 5 repeticiones inmediatas tras el primer fallo $\rightarrow$ 0 fallos adicionales.
+    \item 15 repeticiones tras un reinicio limpio del contenedor ($\texttt{pct reboot}$) $\rightarrow$ el fallo se reprodujo exactamente en el \textbf{primer} intento tras el reinicio, y no volvió a ocurrir en los 14 restantes.
+\end{itemize}
+
+La conclusión es que la condición de carrera es reproducible específicamente en el \textbf{primer} lanzamiento concurrente de contexto CUDA tras cada carga en frío del módulo de kernel (arranque del contenedor). Las inicializaciones concurrentes posteriores, dentro de la misma sesión del driver, son consistentemente estables. La mitigación recomendada es sencilla: escalonar ligeramente (\texttt{sleep 2}) el lanzamiento del primer proceso concurrente tras cada arranque del sistema, o simplemente reintentar la ejecución en caso de fallo, ya que el problema no reaparece una vez el driver ha completado con éxito al menos una inicialización de contexto por GPU.
+
+\section{Consumo eléctrico}
+
+\subsection{Limitación de telemetría}
+
+Se comprobó la disponibilidad de telemetría de potencia por software con \texttt{nvidia-smi -q -d POWER} \cite{nvidia_smi}. El resultado es que todos los campos (\texttt{Power Management}, \texttt{Power Draw}, \texttt{Power Limit}, etc.) devuelven \texttt{N/A} en ambas GPUs. La conclusión es que la arquitectura GT200 carece del subsistema de gestión de energía por software que \texttt{nvidia-smi} requiere para reportar consumo en tiempo real, introducido en arquitecturas posteriores (Fermi/Kepler en adelante) \cite{nvidia_legacy_gpus}. No es un fallo de configuración del driver ni del contenedor: es una limitación física del hardware.
+
+Esta limitación tiene una implicación directa para el objetivo del proyecto: cualquier despliegue de este tipo de hardware rescatado no puede registrar por sí mismo su consumo energético, un dato relevante en sí mismo para un escenario de hardware de bajo coste y recursos limitados, donde monitorizar el gasto eléctrico sin instrumentación externa puede ser importante.
+
+\subsection{Protocolo de medición definido}
+
+Dado que la medición física no estaba disponible en el momento de la redacción (requiere un vatímetro o enchufe inteligente), se definió el siguiente protocolo, que queda pendiente de ejecución como trabajo futuro:
+
+\begin{enumerate}
+    \item Medir el consumo del servidor completo en reposo (sin carga en GPU) --- línea base.
+    \item Generar carga sostenida en una GPU con un bucle de \texttt{matrixMul} a gran escala (matrices grandes, para que cada iteración dure más que en el benchmark por defecto).
+    \item Medir el consumo durante varios minutos de carga sostenida.
+    \item El consumo atribuible a esa GPU es aproximadamente el consumo bajo carga menos el consumo en reposo.
+    \item Repetir para la segunda GPU, y para ambas simultáneamente.
+\end{enumerate}
+
+\section{Discusión de resultados}
+
+Los resultados de este capítulo permiten extraer varias conclusiones sobre la viabilidad de un sistema multi-GPU heterogéneo:
+
+\begin{itemize}
+    \item \textbf{El aprovechamiento conjunto es real}: ambas GPUs pueden ejecutarse simultáneamente sin contención de recursos apreciable, con un rendimiento acorde a sus especificaciones. La heterogeneidad no es, a este nivel, un obstáculo.
+
+    \item \textbf{El cuello de botella no es el hardware, sino el software}: la incompatibilidad entre el front-end de \texttt{nvcc} 6.5 y los \textit{headers} modernos obligó a crear un entorno de compilación adicional (el \textit{chroot} con Debian Jessie), un paso significativamente más complejo que la instalación del driver y el uso del \textit{runtime} precompilado. En términos operativos, hay que distinguir entre el \emph{uso del hardware con binarios ya compilados} (viable para cualquier usuario) y el \emph{desarrollo de código CUDA nuevo} (requiere el entorno de compilación \textit{legacy}).
+
+    \item \textbf{El software \textit{legacy} tiene defectos latentes}: la condición de carrera documentada en la sección \ref{sec:race} es un ejemplo de cómo el driver de 2019 se comporta de forma impredecible en condiciones modernas. Aunque tiene una mitigación sencilla, su existencia debe tenerse en cuenta al diseñar sistemas que usen este hardware.
+
+    \item \textbf{El hardware \textit{legacy} tiene límites físicos}: la ausencia de telemetría de potencia impide la monitorización energética sin instrumentación externa, un factor a considerar en cualquier despliegue de estas características.
+\end{itemize}
+
+\section{Influencia de las lanes PCIe y evaluación cuantitativa de la rentabilidad} \label{sec:pcie_evaluacion}
+
+Esta sección aplica los fundamentos de la sección~\ref{sec:pcie_lanes} y el marco de decisión de la sección~\ref{sec:marco_decision} a los resultados medidos, respondiendo a dos preguntas prácticas: ¿cuánto penalizan las lanes de consumo y cuándo deja de compensar el reaprovechamiento?
+
+\subsection{Por qué no hubo contención: análisis con el modelo de la sección~\ref{sec:pcie_lanes}}
+
+El experimento de ejecución concurrente (tabla~\ref{tab:contention}) mostró 155.26 GFlop/s en solitario vs. $\sim$155.3 bajo concurrencia en la C1060, y 80.49 vs. 81.3 en la GTS 250: contención nula. El modelo $T_{\text{total}} = T_{\text{compute}} + B/BW_{\text{PCIe}}$ lo explica: \texttt{matrixMul} en modo por defecto transfiere apenas unos MB (dos matrices de $320\times320$ floats $\approx$ 0.8 MB) y computa $O(n^3)$ FLOPs. Con $B\approx$1 MB, incluso el slot estrangulado a PCIe 2.0 x4 vía chipset (teórico 2.0 GB/s, real $\approx$0.78 GB/s medido) transfiere en $T_{\text{transfer}} \approx$1.3 ms, frente a $T_{\text{compute}}$ que domina según Roofline \cite{williams2009roofline} al ser $I$ alta. El bus no satura: cada GPU tiene su canal lógico y el uplink x4 del chipset \cite{ryzen_pcie_lanes,asusx670e} no se llena.
+
+En cambio, una carga \textit{transfer-bound} con $B=2$ GB (p. ej., un dataset de imágenes) daría $T_{\text{transfer}}\approx$2.5 s en la GTS 250 (0.78 GB/s) vs. 1.2 s en la C1060 (1.60 GB/s) y solo 0.06 s en un servidor PCIe 4.0 x16 (32 GB/s) \cite{pcisig2022}. Siguiendo a Amdahl \cite{amdahl1967}, el \textit{speedup} de añadir la segunda GPU quedaría limitado por $1-p$, dominada por PCIe, por lo que no compensaría en una plataforma de consumo aunque sí en una de servidor.
+
+\subsection{De los MB/s medidos a las lanes reales}
+
+La tabla~\ref{tab:bandwidth} no es solo un benchmark: es un diagnóstico de topología. PCIe 2.0 x16 teórico son 8 GB/s \cite{pcisig2022}; nuestros 1.60/0.78 GB/s revelan que ninguna de las dos GPUs negocia x16 limpio. La explicación más probable, coherente con \cite{amd7950x} y \cite{asusx670e}, es que la C1060 (01:00.0) negocia PCIe 2.0 x8 en el slot CPU (teórico 4 GB/s, real 1.6 con overhead y por ser GT200 de 2008), y la GTS 250 (08:00.0) negocia x4 vía chipset (teórico 2 GB/s, real 0.78).
+
+Como se estableció en el capítulo~1, la ranura secundaria permaneció fijada manualmente a PCIe Gen~1, es decir, a 2.5~GT/s, durante todas las pruebas. Por tanto, los 2.5~GT/s observados en la GTS 250 reflejan ante todo esa configuración impuesta, no una negociación espontánea del enlace. Esta fijación redujo las variables asociadas al reentrenamiento al atravesar el \textit{chipset}, pero no demuestra por sí sola que los bloqueos posteriores fueran exclusivamente lógicos: debe interpretarse como un control experimental, no como una garantía de aislamiento de la causa. La verificación definitiva, recomendada como protocolo, es ejecutar en el host:
+\begin{lstlisting}[style=bash]
+lspci -vv -s 01:00.0 | grep -E "LnkCap|LnkSta"
+lspci -vv -s 08:00.0 | grep -E "LnkCap|LnkSta"
+nvidia-smi -q -d PCIE | grep -A2 "Link Width"
+\end{lstlisting}
+y reportar \texttt{LnkSta: Speed 5GT/s Width x8/x4}. Este dato debe incluirse en el apéndice~\ref{ape:host}. La consecuencia teórica es clara: \textbf{en consumo no se puede asumir x16 por GPU}; en servidor EPYC/Xeon con 64--128 lanes directas \cite{pcisig2022} sí.
+
+\subsection{¿Cuándo compensa? Cálculo de rentabilidad}
+
+Aplicando el modelo de coste del marco de decisión (sección~\ref{sec:marco_decision}) y los fundamentos de la sección~\ref{sec:fundamentos} al caso de estudio:
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{|l|l|l|}
+\hline
+\textbf{Concepto} & \textbf{Reaprovechamiento (2$\times$ GT200)} & \textbf{Alternativa moderna} \\
+\hline
+Coste hardware & 0 EUR (rescatado) & $\sim$350 EUR (RTX 4060 8GB) \\
+\hline
+Rendimiento pico & 235.75 GFlop/s (155.26+80.49) & $\sim$15\,000 GFlop/s FP32 \\
+\hline
+Eficiencia & $\sim$0.67 GFlop/W (TDP 337W) & $\sim$130 GFlop/W (TDP 115W) \\
+\hline
+CUDA máximo & 6.5 (CC 1.1/1.3) & 12.x (CC 8.9) \\
+\hline
+Horas setup & 15--25 h (cap.~3--4) + riesgo parches & 1 h (driver oficial) \\
+\hline
+\end{tabular}
+\caption{Comparativa de rentabilidad: el reaprovechamiento solo compensa si el valor del cómputo no exige eficiencia ni toolkits modernos y el hardware es coste 0. La alternativa moderna es 60$\times$ más eficiente. TDPs según \cite{nvidia_legacy_gpus}.}
+\label{tab:rentabilidad}
+\end{table}
+
+\textbf{Regla práctica derivada de Gustafson} \cite{gustafson1988}: si el problema escala (p. ej., de $320^2$ a $4096^2$, $I$ crece con $n$), $p\to1$ y el sistema escala linealmente pese a la heterogeneidad, compensa. Si el problema es fijo y pequeño, Amdahl domina y no compensa el esfuerzo de parchear 7 años de drift. Para un TFG/docencia donde el objetivo es aprender VFIO/LXC/DKMS, la rentabilidad es formativa y sí compensa; para producción donde cada kWh cuenta y se necesita CUDA $>$6.5, no compensa: la tabla~\ref{tab:rentabilidad} muestra 60$\times$ menos eficiencia.
+
+\textbf{Protocolo pendiente} (cap. 5.6.2): completar con vatímetro siguiendo los 5 pasos ya definidos y calcular $C_{\text{kWh}}\cdot h$ real para cerrar la ecuación de ganancia. Hasta entonces, la decisión debe tomarse con el marco $V = F_{\text{driver}}\land F_{\text{aislamiento}}\land F_{\text{carga}}\land F_{\text{coste}}\land F_{\text{estabilidad}}$ de la figura~\ref{fig:arbol_viabilidad}.
+

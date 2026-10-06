@@ -1,0 +1,170 @@
+\chapter{Pivote a LXC: el driver legacy en Proxmox VE} \label{cap3}
+
+\section{Por qué LXC}
+
+La tecnología de contenedores LXC presenta, frente a las máquinas virtuales, una diferencia fundamental:
+ los contenedores comparten el kernel del host. Esta característica, que en el capítulo 2 nos parecía 
+ una limitación, es precisamente la clave de esta fase. Al compartir el kernel, el contenedor no 
+ necesita un driver propio: usa el módulo del driver NVIDIA que carga el host, y solo necesita montar
+ los \textit{character devices} correspondientes. No hay IOMMU, no hay grupos, no hay 
+ resets: el aislamiento a nivel de hardware no interviene.
+
+La contrapartida es inmediata: volvemos a la limitación del driver único. Solo puede haber un driver
+propietario de NVIDIA a nivel de sistema, y ese driver debe ser capaz de controlar todas las GPUs. 
+Como hasta ahora ambas tarjetas de pruebas comparten la misma rama \textit{legacy} (340.xx), 
+consideramos que valía la pena hacer la prueba. El problema se traslada entonces de la virtualización a 
+la instalación del driver: conseguir que el driver 340.108 ---con el último \textit{release} oficial en 2019--- 
+funcione sobre un kernel de 2026.
+
+\section{Diagnóstico de la incompatibilidad fundamental} \label{sec:cap3-diagnostico}
+
+Para entender el origen de la incompatibilidad conviene recordar cómo se integra un driver en Linux. Un driver como el de NVIDIA no es un programa independiente, sino un \textit{módulo} que se carga dentro del propio kernel. Para construirlo hay que compilar su código fuente contra los \textit{headers} del kernel ---los ficheros que describen la estructura interna del mismo--- y con un compilador (gcc) compatible con el que se usó para compilar ese kernel. Si alguna de estas tres piezas (código del driver, \textit{headers} y compilador) no encaja con las demás, el módulo no puede compilarse. Además, como el módulo resultante queda ligado a la versión concreta del kernel para la que se compiló, debe recompilarse cada vez que el kernel se actualiza. De esta tarea se encarga habitualmente DKMS (\textit{Dynamic Kernel Module Support}), una herramienta que recompila de forma automática los módulos externos al kernel tras cada actualización.
+
+El driver NVIDIA 340.108 fue diseñado contra kernels de la serie 3.x/4.x. El kernel por defecto de Proxmox VE 9.2 
+(serie 6.x/7.x, de 2025--2026) presenta una diferencia de aproximadamente siete años de evolución de la API 
+interna del kernel (gestión de memoria, macros de compilación, etc.). No es de extrañar que el código fuente del driver no 
+compile sin más 
+contra los \textit{headers} modernos.
+
+Esta distancia temporal es especialmente problemática en Linux: las distintas versiones del kernel no mantienen un patrón 
+estable en la 
+interfaz interna para los módulos, ni a nivel de código fuente (API) ni a nivel binario (ABI). Cuando 
+esta interfaz cambia, los drivers incluidos en el propio kernel se adaptan a la vez, pero un driver externo como el de 
+NVIDIA depende de que su fabricante ---o, en su defecto, la comunidad--- lo actualice. Sin esa actualización, cuanto 
+mayor es la distancia entre versiones, más llamadas del driver dejan de existir o cambian de firma, lo que explica la 
+gran cantidad de errores de compilación que se describen más adelante.
+
+Una comparación con el capítulo 1 ayuda a situar el problema: en Ubuntu 18.04 (kernel 4.15, gcc 7.x, apenas dos años 
+de diferencia respecto al driver), el paquete \texttt{nvidia-340} instalaba sin complicaciones porque se mantienen 
+binarios y parches adaptados para ello de forma oficial. Para combinaciones de kernel tan recientes como las de este trabajo, 
+\textbf{ningún repositorio oficial mantiene el driver 340.xx}: la tabla de plazos de soporte de NVIDIA 
+declara expresamente que la serie 340.* es la última que da soporte a las GPUs G8x, G9x y GT2xx, que la 
+compatibilidad con kernels Linux se cerró en la versión 340.108 y que no está prevista ninguna publicación
+posterior de la serie \cite{nvidia_legacy_support,nvidia_legacy_gpu}. Por tanto, la compilación debe abordarse 
+manualmente o mediante parches de terceros mantenidos por la comunidad, si es que existen.
+
+\section{Bitácora de resolución de problemas}
+
+A continuación se resumen, siguiendo a grandes rasgos el orden en que se presentaron, los obstáculos encontrados hasta conseguir que el driver funcionase. El objetivo no es reproducir cada orden ejecutada, sino explicar qué falló, por qué, y qué enseña cada problema sobre la viabilidad de este tipo de sistemas. Los pasos para reproducir la instalación se resumen en el apéndice~\ref{ape:host}, y la relación completa de problemas y causas raíz, en el apéndice~\ref{ape:causas-raiz}.
+
+No todos los obstáculos tuvieron el mismo peso. La mayoría fueron incidencias menores de configuración, resueltas con rapidez, mientras que uno de ellos ---el fallo estructural de la compilación manual--- obligó a cambiar por completo de estrategia.
+
+\subsection{Preparación del host y del entorno de compilación} \label{sec:cap3-preparacion}
+
+El primer paso fue liberar las GPUs de la configuración heredada del capítulo~\ref{cap2}. Durante los 
+experimentos con VFIO, las tarjetas habían quedado reservadas desde el arranque para \texttt{vfio-pci}, 
+el módulo que las aparta del host para cedérselas a una máquina virtual, de modo que ningún driver del host 
+podía tomar su control. Este paso puso de manifiesto que ambos enfoques son incompatibles por naturaleza: 
+VFIO necesita reservar el hardware del host, mientras que LXC necesita que el host lo gobierne. Por ello, 
+además de revertir la configuración para aislamiento, se diseñó el sistema de arranque dual descrito en la sección~\ref{sec:arranque},
+que permite alternar limpiamente entre ambas configuraciones en cada inicio.
+
+A continuación se abordó la elección del kernel. El que Proxmox VE 9.2 instala por defecto (versión 7.0) era demasiado moderno para el driver, por lo que se instaló y fijó como kernel de arranque una versión anterior también soportada por Proxmox, la 6.14. Este cambio, sin embargo,
+no fue suficiente: incluso con la versión 6.14 seguía sin haber paquetes precompilados ni parches oficiales, y la diferencia entre driver y kernel seguía siendo demasiado grande para compilar el driver sin modificar su código.
+
+Durante esta preparación surgieron además dos incidencias menores. Por un lado, el instalador no encontraba los \textit{headers} del kernel porque Proxmox VE 9 había cambiado el nombre del paquete que los contiene (de \texttt{pve-headers} a \texttt{proxmox-headers}), un ejemplo de cómo buena parte de la documentación disponible para software antiguo ha quedado desactualizada. Por otro, el instalador de NVIDIA detenía la instalación al detectar que el kernel se había compilado con gcc 12.2 y el sistema disponía de gcc 12.4. Aunque se trata de una diferencia menor que el propio kernel solo trata como un aviso, fue necesario indicar expresamente al driver que ignorase esta comprobación, tanto en el instalador como, más adelante, en la configuración de DKMS.
+
+\subsection{Intentos de compilación manual sin parches} \label{sec:cap3-manual}
+
+Con los requisitos previos resueltos, se intentó compilar el driver manualmente y sin modificar su código, aun
+sabiendo que era un camino costoso en complejidad y en tiempo. Algunos de los errores pudieron resolverse
+ajustando directivas de compilación, pero, como se verá, resolverlos todos de esta forma no era viable
+ni habría dado lugar a una solución robusta.
+
+Los primeros errores fueron de configuración del entorno: la convivencia de varias versiones de gcc y la modificación manual de las opciones de compilación impedían localizar algunos ficheros, tanto del compilador como del propio driver, y se resolvieron con ajustes puntuales. El siguiente, en cambio, fue estructural: incluso con los anteriores resueltos, la compilación terminó en cientos de errores encadenados como los siguientes:
+\begin{lstlisting}[style=bash]
+error: unknown type name 'nv_state_t'
+error: request for member 'flags' in something not a structure or union
+\end{lstlisting}
+
+Su origen está en el mecanismo con el que el driver se adapta a cada kernel. Como el kernel cambia de una versión a otra, el driver incluye un script llamado \texttt{conftest} que, antes de compilar, realiza pequeñas pruebas sobre los \textit{headers} del kernel de destino para averiguar qué estructuras y funciones ofrece y qué versión de gcc emplea, y con ello genera un fichero de configuración (\texttt{conftest.h}) con las definiciones que necesita el resto del código. Al haber modificado manualmente las opciones de compilación, este mecanismo no llegó a ejecutarse correctamente, y el driver se compiló sin información sobre la configuración del kernel de destino. El error se repitió en todos los intentos de compilación manual.
+
+Este fallo marcó el final de la vía manual. Con tanta distancia entre versiones, no basta con ajustar la compilación: el propio código del driver debe modificarse para adaptarse a los cambios internos del kernel. Por ello se recurrió a un conjunto de parches ya mantenido por la comunidad.
+
+\section{Los parches comunitarios y la solución con DKMS}
+
+Si en Ubuntu 18.04 el mismo driver se instalaba sin dificultad (capítulo~\ref{cap1}), es porque la propia 
+distribución mantenía parches para adaptarlo a su kernel. Para un kernel actual, ese trabajo lo realizan 
+repositorios mantenidos por la comunidad. 
+
+\subsection{De la compilación manual a DKMS} \label{sec:cap3-parches}
+
+La incorporación de los parches comunitarios se realizó en dos intentos, que se diferencian en dos aspectos: el repositorio de parches empleado y la forma de compilar el driver. Distinguir ambos aspectos es clave para entender por qué el primero fracasó y el segundo no.
+
+En el primer intento se utilizó el repositorio \texttt{dkosmari/nvidia-340.108-updated} \cite{dkosmari}, que reúne todas las modificaciones en un único parche. El parche se aplicó sin problemas sobre el código original del driver \cite{nvidia_340_driver_file}, de modo que el código ya quedaba adaptado al kernel moderno. Sin embargo, la compilación se siguió realizando igual que en la sección~\ref{sec:cap3-manual}: invocando directamente la orden de compilación con opciones ajustadas manualmente. Como consecuencia, el mecanismo \texttt{conftest} volvió a no ejecutarse correctamente y la compilación falló por el mismo motivo. Este intento demostró que parchear el código era necesario, pero no suficiente: también había que cambiar la forma de compilarlo.
+
+En el segundo intento se cambiaron ambos aspectos. Por un lado, la compilación se delegó en DKMS. Además de recompilar el módulo tras cada actualización del kernel, DKMS ejecuta el proceso de compilación tal y como lo define el propio driver en su fichero de configuración (\texttt{dkms.conf}), sin intervenir manualmente en las opciones de compilación. De este modo, el mecanismo \texttt{conftest} se ejecuta como el driver espera, lo cual era precisamente lo que había fallado en todos los intentos anteriores. Por otro lado, se sustituyó el parche único por el repositorio \texttt{MichelBoucey/nvidia-340xx} \cite{michelboucey}, derivado de \texttt{archlinux-jerry/nvidia-340xx} \cite{archlinuxjerry} y mantenido activamente. Frente a un parche único y genérico, este repositorio ofrece parches específicos para versiones concretas del kernel, entre ellas la 6.14 empleada en este trabajo, lo que ofrecía mayores garantías de compatibilidad con el entorno. Por ese motivo, no se llegó a probar el primer repositorio con DKMS. Además, el nuevo repositorio está preparado para integrarse con DKMS: uno de sus parches deja lista la configuración que este necesita, a la que solo hubo que añadir la indicación de ignorar la comprobación de versión del compilador descrita en la sección~\ref{sec:cap3-preparacion}.
+
+Estos parches son incrementales y adaptan el driver a las sucesivas versiones del kernel (de la 5.7 a la 7.0) y del compilador (gcc 14 y 15). Como el kernel se había fijado en la versión 6.14, solo correspondía aplicar los parches necesarios hasta esa versión; los destinados a kernels posteriores, también incluidos en el repositorio, no eran necesarios. Los 21 parches aplicados se integraron sin ningún fallo.
+
+La tabla~\ref{tab:intentos-compilacion} resume la evolución de los intentos de compilación descritos hasta aquí.
+
+\begin{table}[htbp]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{|L{3.4cm}|L{3.0cm}|L{2.6cm}|L{4.2cm}|}
+\hline
+\textbf{Intento} & \textbf{Código del driver} & \textbf{Compilación} & \textbf{Resultado} \\
+\hline
+Sin parches (sección~\ref{sec:cap3-manual}) & Original & Manual & Falla: código no adaptado y \texttt{conftest} sin ejecutar \\
+\hline
+Repositorio \texttt{dkosmari} & Parche único & Manual & Falla: \texttt{conftest} sin ejecutar \\
+\hline
+Repositorio \texttt{MichelBoucey} & Parches incrementales & DKMS & Éxito, tras corregir una opción de compilación \\
+\hline
+\end{tabular}
+\caption{Evolución de los intentos de compilación del driver}
+\label{tab:intentos-compilacion}
+\end{table}
+
+Gracias a DKMS, el módulo se recompilará automáticamente con cada actualización del kernel, en lugar de quedar como un binario congelado, válido solo para la versión actual, que habría que recompilar manualmente.
+
+Por último, se instalaron los componentes del driver que no forman parte del kernel (librerías y herramientas como \texttt{nvidia-smi}), indicando al instalador oficial que no volviera a compilar el módulo. Se descartaron las librerías de 32 bits y la configuración del entorno gráfico, innecesarias en un servidor sin interfaz gráfica.
+
+\section{Verificación y consideraciones sobre el módulo UVM}
+
+Ejecutamos \texttt{nvidia-smi} y comprobamos que el driver detecta ambas GPUs sin problemas. La instalación quedó además verificada tras un ciclo completo de arranque, confirmando la persistencia del módulo vía DKMS.
+
+Un aspecto técnico relevante de esta fase es la decisión deliberada de no compilar el segundo módulo que suele acompañar al driver, \texttt{nvidia-uvm.ko}. Como se explicó en los preliminares, UVM (\textit{Unified Virtual Memory}) es un sistema de memoria virtual unificada compartido entre CPU y GPU \cite{nvidia_uvm_docs}. Sin UVM, la RAM y la VRAM son dos espacios completamente aislados: el programador debe reservar memoria por separado en cada uno de ellos y copiar explícitamente los datos de la CPU a la GPU y de vuelta. Con UVM, ambos espacios se perciben como uno solo, y basta con una única reserva. El intercambio de datos se resuelve mediante \textit{page faulting} por hardware, de forma muy similar a la paginación de los sistemas operativos: cuando se accede a una dirección que no está cargada, el módulo \texttt{uvm} intercepta el fallo y trae la página correspondiente, consultando unas tablas que indican dónde se encuentra cada una (CPU, GPU o ambas).
+
+Las GPUs de las que disponemos son previas a la introducción de UVM en el hardware, por lo que todas las limitaciones descritas 
+nos afectan de forma directa,
+al no estar soportada la memoria unificada en estas tarjetas.
+La decisión de no compilar el módulo \texttt{nvidia-uvm.ko} se validó empíricamente en el capítulo 5, cuando \texttt{deviceQuery} confirmó que ambas tarjetas reportan \texttt{Device supports Unified Addressing (UVA): No}.
+
+\section{Discusión}
+
+La tabla \ref{tab:causas-resumen} resume los obstáculos de esta fase agrupados por categoría, de modo que pueda apreciarse la naturaleza del problema en conjunto; la versión completa, problema a problema, se recoge en el apéndice~\ref{ape:causas-raiz}.
+
+\begin{table}[H]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{|L{4.0cm}|L{7.8cm}|}
+\hline
+\textbf{Categoría} & \textbf{Problemas agrupados} \\
+\hline
+Configuración del host & Residuos de la configuración VFIO previa (1 problema) \\
+\hline
+Empaquetado / documentación & Cambio de nomenclatura \texttt{pve-*} $\rightarrow$ \texttt{proxmox-*}; plantilla de contenedor con \textit{build} cambiante (2) \\
+\hline
+Obsolescencia del software \textit{legacy} & Driver de 2019 frente a kernel de 2026; front-end de \texttt{nvcc} 6.5 frente a cabeceras C++11; instaladores rotos de CUDA (4) \\
+\hline
+Configuración de \textit{toolchain} & Múltiples gcc coexistentes, \texttt{-nostdinc}, checks estrictos del instalador (3) \\
+\hline
+Metodología de compilación & Fallo de \texttt{conftest} al sobrescribir flags manualmente; necesidad de extracción manual por capas (3) \\
+\hline
+Mantenimiento de terceros & Dependencia de parches comunitarios para la compatibilidad del driver (2) \\
+\hline
+\end{tabular}
+\caption{Causas raíz de la fase de instalación del driver, agrupadas por categoría}
+\label{tab:causas-resumen}
+\end{table}
+
+El resultado más relevante de este capítulo es que la viabilidad de ejecutar hardware NVIDIA de la arquitectura Tesla (2008--2009) en un host con kernel y \textit{toolchain} de 2025--2026 \textbf{depende enteramente de la existencia y mantenimiento activo de parches de terceros}, dado que NVIDIA no ofrece soporte oficial para esta combinación desde hace varios años. La reproducibilidad del proceso está, por tanto, sujeta a la disponibilidad continuada de dichos parches, un riesgo que debe tenerse en cuenta al valorar este tipo de despliegues.
+
+Desde el punto de vista metodológico, el proceso confirma la importancia de utilizar \textit{toolchains} gestionados (DKMS) frente a invocaciones manuales de \texttt{make}, y la conveniencia de fijar versiones de compilador mediante \texttt{update-alternatives} para evitar interacciones entre múltiples versiones de gcc. En términos cualitativos, la conclusión general de la fase es doble: el \textbf{obstáculo dominante} no es el hardware (que funciona correctamente bajo el driver correcto), sino la \textbf{obsolescencia del software}, y el \textbf{factor habilitante} es la existencia de una comunidad que mantiene vivo el soporte de estos drivers. Sin esa comunidad, el aprovechamiento de estas tarjetas sería directamente inviable, lo que sitúa el mantenimiento comunitario como un criterio de viabilidad de primer orden en la evaluación de sistemas con hardware \textit{legacy}. El procedimiento completo y reproducible, sin la traza de errores, se recoge en el apéndice~\ref{ape:host}.
+
+Con el driver funcionando en el host y ambas GPUs detectadas, el siguiente paso, que se aborda en el capítulo 4, es proporcionar acceso a las tarjetas a un contenedor LXC e instalar el stack de cómputo CUDA compatible.
+

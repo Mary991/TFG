@@ -1,0 +1,371 @@
+% ---------------------------------------------------------------------------
+% Base bibliografica de la memoria
+% Organizada por bloques tematicos. Todas las URL han sido verificadas.
+% ---------------------------------------------------------------------------
+
+% ==== Leyes de escalado y modelo de rendimiento ==========================
+@inproceedings{amdahl1967,
+  title = {{Validity of the single processor approach to achieving large scale computing capabilities}},
+  author = {Amdahl, Gene M.},
+  booktitle = {AFIPS Conference Proceedings},
+  year = {1967},
+  pages = {483--485},
+  URL = {https://doi.org/10.1145/1465482.1465560}
+}
+
+@article{gustafson1988,
+  title = {{Reevaluating Amdahl's law}},
+  author = {Gustafson, John L.},
+  journal = {Communications of the ACM},
+  volume = {31},
+  number = {5},
+  pages = {532--533},
+  year = {1988},
+  URL = {https://doi.org/10.1145/42411.42415}
+}
+
+@article{williams2009roofline,
+  title = {{Roofline: an insightful visual performance model for multicore architectures}},
+  author = {Williams, Samuel and Waterman, Andrew and Patterson, David},
+  journal = {Communications of the ACM},
+  volume = {52},
+  number = {4},
+  pages = {65--76},
+  year = {2009},
+  URL = {https://doi.org/10.1145/1498765.1498785}
+}
+
+% ==== Bus PCIe, IOMMU, ACS, FLR y gestion de energia ======================
+@misc{pcisig2022,
+  title = {{PCI Express Base Specification Revision 5.0 / 6.0}},
+  author = {{PCI-SIG}},
+  year = {2022},
+  URL = {https://pcisig.com/specifications}
+}
+
+@misc{pci_express_wiki,
+  title = {{PCI Express}},
+  author = {{Wikipedia}},
+  URL = {https://en.wikipedia.org/wiki/PCI_Express}
+}
+
+@misc{kernel_iommu,
+  title = {{I/O Memory Management Unit (IOMMU)}},
+  author = {{Wikipedia}},
+  URL = {https://en.wikipedia.org/wiki/IOMMU}
+}
+
+@misc{ms_sriov,
+  title = {{Introducción a la virtualización de E/S raíz única (SR-IOV)}},
+  author = {{Microsoft}},
+  URL = {https://learn.microsoft.com/es-es/windows-hardware/drivers/network/single-root-i-o-virtualization--sr-iov-}
+}
+
+@misc{heiko_iommu_groups,
+  title = {{IOMMU Groups: What You Need to Consider}},
+  author = {Sieger, Heiko},
+  year = {2017},
+  URL = {https://www.heiko-sieger.info/iommu-groups-what-you-need-to-consider/}
+}
+
+@misc{amd_pg344_flr,
+  title = {{Function Level Reset (PG344)}},
+  author = {{AMD}},
+  URL = {https://docs.amd.com/r/en-US/pg344-pcie-dma-versal/Function-Level-Reset}
+}
+
+@misc{uefi_gop_amd,
+  title = {{Graphics Output Protocol (GOP) Driver for UEFI}},
+  author = {{AMD} and {UEFI Forum}},
+  URL = {https://uefi.org/sites/default/files/resources/UPFS11_P4_UEFI_GOP_AMD.pdf}
+}
+
+@misc{kernel_pci_pm,
+  title = {{PCI Power Management (Documentación del kernel Linux)}},
+  author = {{Linux Kernel Documentation}},
+  URL = {https://docs.kernel.org/power/pci.html}
+}
+
+@misc{redhat_aspm,
+  title = {{Active-State Power Management}},
+  author = {{Red Hat}},
+  booktitle = {Power Management Guide, Red Hat Enterprise Linux},
+  URL = {https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/7/html/power_management_guide/aspm}
+}
+
+@misc{kernel_lockup_watchdog,
+  title = {{Softlockup detector and hardlockup detector (nmi\_watchdog) (Documentación del kernel Linux)}},
+  author = {{Linux Kernel Documentation}},
+  URL = {https://docs.kernel.org/admin-guide/lockup-watchdogs.html}
+}
+
+@misc{kernel_vfio,
+  title = {{VFIO: ``Virtual Function I/O'' (Documentación del kernel Linux)}},
+  author = {{Linux Kernel Documentation}},
+  URL = {https://docs.kernel.org/driver-api/vfio.html}
+}
+
+@misc{supermicro_gpu_passthrough,
+  title = {{¿Qué es el paso de GPU?}},
+  author = {{Supermicro}},
+  URL = {https://www.supermicro.com/es-es/glossary/gpu-passthrough}
+}
+
+@misc{heiko_vga_passthrough,
+  title = {{Running Windows 10 on Linux using KVM with VGA Passthrough}},
+  author = {Sieger, Heiko},
+  URL = {https://www.heiko-sieger.info/running-windows-10-on-linux-using-kvm-with-vga-passthrough/}
+}
+
+% ==== Plataforma CUDA y GPUs de la familia GT200 =========================
+@misc{nvidia_cuda_programming,
+  title = {{NVIDIA CUDA Runtime API}},
+  author = {{NVIDIA}},
+  URL = {https://docs.nvidia.com/cuda/cuda-runtime-api/index.html}
+}
+
+@misc{nvidia_legacy_gpus,
+  title = {{Legacy CUDA GPU Compute Capability}},
+  author = {{NVIDIA}},
+  URL = {https://developer.nvidia.com/cuda-legacy-gpus}
+}
+
+@misc{nvidia_driver_vs_runtime,
+  title = {{Difference between the Driver API and Runtime API}},
+  author = {{NVIDIA}},
+  URL = {https://docs.nvidia.com/cuda/cuda-driver-api/driver-vs-runtime-api.html}
+}
+
+@misc{so_cuda_driver_runtime,
+  title = {{CUDA Driver API vs. CUDA runtime}},
+  author = {{Stack Overflow}},
+  URL = {https://stackoverflow.com/questions/242894/cuda-driver-api-vs-cuda-runtime}
+}
+
+@misc{so_o_vs_ko,
+  title = {{Difference between .o and .ko file}},
+  author = {{Stack Overflow}},
+  URL = {https://stackoverflow.com/questions/10476990/difference-between-o-and-ko-file}
+}
+
+@misc{realworldtech_gt200,
+  title = {{NVIDIA's GT200: Inside a Parallel Processor}},
+  author = {Kanter, David},
+  journal = {Real World Tech},
+  year = {2008},
+  URL = {https://www.realworldtech.com/gt200/}
+}
+
+@misc{videocardz_gt200,
+  title = {{NVIDIA GT200 Graphics Processing Unit (GPU)}},
+  author = {{VideoCardz.net}},
+  year = {2014},
+  URL = {https://videocardz.net/gpu/nvidia-gt200}
+}
+
+@misc{videocardz_c1060,
+  title = {{NVIDIA Tesla C1060 Data Center Accelerator Specs}},
+  author = {{VideoCardz.net}},
+  URL = {https://videocardz.net/nvidia-tesla-c1060}
+}
+
+% ==== Ecosistema de software NVIDIA en Linux ==============================
+@misc{nvidia_driver_readme,
+  title = {{NVIDIA Accelerated Linux Graphics Driver README and Installation Guide}},
+  author = {{NVIDIA}},
+  URL = {https://download.nvidia.com/XFree86/Linux-x86_64/README/}
+}
+
+@misc{nvidia_legacy_gpu,
+  title = {{What's a legacy GPU?}},
+  author = {{NVIDIA}},
+  URL = {https://www.nvidia.com/en-us/drivers/unix/legacy-gpu/}
+}
+
+@misc{nvidia_legacy_support,
+  title = {{Support timeframes for Unix legacy GPU releases}},
+  author = {{NVIDIA}},
+  URL = {https://nvidia.custhelp.com/app/answers/detail/a_id/3142}
+}
+
+@misc{nvidia_legacy_driver,
+  title = {{Unix Drivers (archivo de drivers para Linux)}},
+  author = {{NVIDIA}},
+  URL = {https://www.nvidia.com/en-us/drivers/unix/}
+}
+
+@misc{nvidia_340_release_notes,
+  title = {{Linux, Solaris, and FreeBSD driver 340.107 (legacy for GeForce 8 and 9 series)}},
+  author = {{NVIDIA}},
+  year = {2018},
+  URL = {https://forums.developer.nvidia.com/t/linux-solaris-and-freebsd-driver-340-107-legacy-for-geforce-8-and-9-series/62111/1}
+}
+
+@misc{nvidia_forum_multidriver,
+  title = {{Possible to use multiple drivers for multi GPU?}},
+  author = {{NVIDIA Developer Forums}},
+  year = {2023},
+  URL = {https://forums.developer.nvidia.com/t/possible-to-use-multiple-drivers-for-multi-gpu/269500}
+}
+
+@misc{nvidia_forum_two_drivers,
+  title = {{Linux: is it possible to have 2 driver versions on a single host?}},
+  author = {{NVIDIA Developer Forums}},
+  year = {2019},
+  URL = {https://forums.developer.nvidia.com/t/linux-is-it-possible-to-have-2-drivers-versions-on-single-host/72254}
+}
+
+@misc{nvidia_forum_two_cards,
+  title = {{Setting up two different drivers for two different graphics cards}},
+  author = {{NVIDIA Developer Forums}},
+  URL = {https://forums.developer.nvidia.com/t/setting-up-two-different-drivers-for-two-different-graphics-card/42252}
+}
+
+@misc{nvidia_smi,
+  title = {{NVIDIA System Management Interface (nvidia-smi)}},
+  author = {{NVIDIA}},
+  URL = {https://developer.nvidia.com/nvidia-system-management-interface}
+}
+
+@misc{nvidia_uvm_blog,
+  title = {{Unified Memory for CUDA Beginners}},
+  author = {{NVIDIA}},
+  year = {2017},
+  URL = {https://developer.nvidia.com/blog/unified-memory-cuda-basics/}
+}
+
+@misc{nvidia_uvm_docs,
+  title = {{Unified Virtual Memory (UVM)}},
+  author = {{NVIDIA}},
+  URL = {https://docs.nvidia.com/ai-enterprise/release-7/latest/infra-software/vgpu/features.html}
+}
+
+@misc{nvidia_340_driver_file,
+  title = {{NVIDIA-Linux-x86\_64-340.108.run (instalador del driver)}},
+  author = {{NVIDIA}},
+  year = {2016},
+  URL = {https://us.download.nvidia.com/XFree86/Linux-x86_64/340.108/NVIDIA-Linux-x86_64-340.108.run}
+}
+
+@misc{cuda_65_archive,
+  title = {{CUDA Toolkit 6.5 (instalador para Linux x86\_64)}},
+  author = {{NVIDIA}},
+  year = {2014},
+  URL = {https://developer.download.nvidia.com/compute/cuda/6_5/rel/installers/cuda_6.5.14_linux_64.run}
+}
+
+@misc{cuda65_perf_report,
+  title = {{CUDA 6.5 Performance Report}},
+  author = {{NVIDIA}},
+  year = {2014},
+  URL = {https://developer.download.nvidia.com/compute/cuda/6_5/rel/docs/CUDA_6.5_Performance_Report.pdf}
+}
+
+% ==== Parches comunitarios y DKMS ========================================
+@misc{dkms,
+  title = {{DKMS: Dynamic Kernel Module Support}},
+  author = {{Dell}},
+  URL = {https://github.com/dell/dkms}
+}
+
+@misc{michelboucey,
+  title = {{Repositorio en GitHub de MichelBoucey/nvidia-340xx}},
+  author = {Boucey, Michel},
+  URL = {https://github.com/MichelBoucey/nvidia-340xx}
+}
+
+@misc{archlinuxjerry,
+  title = {{Repositorio en GitHub de archlinux-jerry/nvidia-340xx}},
+  author = {{archlinux-jerry}},
+  URL = {https://github.com/archlinux-jerry/nvidia-340xx}
+}
+
+@misc{dkosmari,
+  title = {{Repositorio en GitHub de dkosmari/nvidia-340.108-updated}},
+  author = {{dkosmari}},
+  URL = {https://github.com/dkosmari/nvidia-340.108-updated}
+}
+
+% ==== Contenedores, virtualizacion y sistema anfitrion ===================
+@misc{lxc_introduction,
+  title = {{LXC: Introduction}},
+  author = {{Linux Containers}},
+  URL = {https://linuxcontainers.org/lxc/introduction/}
+}
+
+@misc{lxc_containers_conf,
+  title = {{lxc.container.conf: LXC container configuration file (manpage)}},
+  author = {{Linux Containers}},
+  year = {2021},
+  URL = {https://linuxcontainers.org/lxc/manpages/man5/lxc.container.conf.5.html}
+}
+
+@misc{lxc_security,
+  title = {{LXC: Security}},
+  author = {{Linux Containers}},
+  URL = {https://linuxcontainers.org/lxc/security/}
+}
+
+@misc{proxmox_ve,
+  title = {{Proxmox VE Wiki}},
+  author = {{Proxmox}},
+  URL = {https://pve.proxmox.com/wiki/Main_Page}
+}
+
+@misc{proxmox_pci_passthrough,
+  title = {{PCI(e) Passthrough --- Proxmox VE Wiki}},
+  author = {{Proxmox}},
+  URL = {https://pve.proxmox.com/wiki/PCI(e)_Passthrough}
+}
+
+@misc{arch_nouveau,
+  title = {{Nouveau --- Arch Linux Wiki}},
+  author = {{Arch Linux}},
+  URL = {https://wiki.archlinux.org/title/Nouveau}
+}
+
+% ==== Distribuciones Linux y archivos historicos =========================
+@misc{debian_archive,
+  title = {{Archivo histórico de Debian (archive.debian.org)}},
+  author = {{Debian}},
+  URL = {https://archive.debian.org/}
+}
+
+@misc{ubuntu_old_releases,
+  title = {{Índice de distribuciones antiguas de Ubuntu (old-releases.ubuntu.com)}},
+  author = {{Canonical}},
+  URL = {https://old-releases.ubuntu.com/ubuntu/dists/}
+}
+
+@misc{so_old_ubuntu_repos,
+  title = {{Where can I get the repositories for old Ubuntu versions?}},
+  author = {{Super User}},
+  URL = {https://superuser.com/questions/339537/where-can-i-get-the-repositories-for-old-ubuntu-versions}
+}
+
+% ==== Hardware de referencia del caso de estudio =========================
+@misc{amd7950x,
+  title = {{AMD Ryzen 9 7950X Specifications}},
+  author = {{AMD}},
+  URL = {https://www.amd.com/en/products/cpu/amd-ryzen-9-7950x}
+}
+
+@misc{asusx670e,
+  title = {{TUF GAMING X670E-PLUS WIFI: especificaciones}},
+  author = {{ASUS}},
+  URL = {https://www.asus.com/motherboards-components/motherboards/tuf-gaming/tuf-gaming-x670e-plus-wifi/techspec/}
+}
+
+@misc{ryzen_pcie_lanes,
+  title = {{Socket AM5 Platform and X670E Chipset: PCIe Lanes and Connectivity}},
+  author = {{AMD}},
+  year = {2022},
+  URL = {https://www.amd.com/en/chipsets/x670}
+}
+
+% ==== Contexto general ===================================================
+@misc{ibm_hpc,
+  title = {{¿Qué es la computación de alto rendimiento (HPC)?}},
+  author = {{IBM}},
+  URL = {https://www.ibm.com/think/topics/high-performance-computing}
+}

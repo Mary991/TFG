@@ -1,0 +1,62 @@
+\chapter{Tabla consolidada de causas raíz} \label{ape:causas-raiz}
+
+Este apéndice recoge, de forma consolidada, los problemas documentados a lo largo del trabajo con su causa raíz y su categoría. Sirve como referencia rápida para reproducir el razonamiento de los capítulos~\ref{cap3} y~\ref{cap4}.
+
+\section{Capa host: instalación del driver 340.108}
+
+\begin{table}[htbp]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{|c|L{3.5cm}|L{5.5cm}|L{3.8cm}|}
+\hline
+\# & \textbf{Problema} & \textbf{Causa raíz} & \textbf{Categoría} \\
+\hline
+1 & Conflicto de configuración & Residuos de configuración VFIO reservando las GPUs & Configuración del host \\
+\hline
+2 & Cabeceras (\textit{headers}) no encontradas & Cambio de nomenclatura de paquetes en Proxmox VE 9 (\texttt{pve-*} $\rightarrow$ \texttt{proxmox-*}) & Empaquetado / doc. desactualizada \\
+\hline
+3 & Kernel demasiado nuevo & $\sim$7 años de diferencia entre el driver (2019) y el kernel por defecto (2025--2026) & Obsolescencia driver \textit{legacy} \\
+\hline
+4 & Desajuste de versión de gcc & Diferencia de \textit{patch version} entre el gcc del kernel y el del sistema & Comprobaciones estrictas del instalador NVIDIA \\
+\hline
+5--6 & Cabeceras del compilador no resueltas & Interacción entre \texttt{-nostdinc} y múltiples versiones de gcc coexistentes & Configuración del \textit{toolchain} \\
+\hline
+7 & Tipos del driver no definidos & Fallo del mecanismo \texttt{conftest} al sobrescribir flags manualmente & Metodología de compilación \\
+\hline
+8--9 & Necesidad de parches de terceros & API del kernel completamente distinta a la esperada por el código de 2019 & Sin mantenimiento oficial \\
+\hline
+10 & Opción de compilación no reconocida & Parche comunitario orientado a gcc 15+ aplicado sobre gcc 12.4 & Desfase entre parche y \textit{toolchain} \\
+\hline
+\end{tabular}
+\caption{Causas raíz de la instalación del driver en el host}
+\label{tab:causas-host}
+\end{table}
+
+\section{Capa contenedor/CUDA}
+
+\begin{table}[htbp]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{|c|L{3.5cm}|L{5.5cm}|L{3.8cm}|}
+\hline
+\# & \textbf{Problema} & \textbf{Causa raíz} & \textbf{Categoría} \\
+\hline
+1 & Plantilla no encontrada & La nomenclatura de la versión de \textit{build} cambia con el tiempo en el índice de Proxmox & Doc. desactualizada \\
+\hline
+2 & Compilador no soportado (instalador CUDA) & CUDA 6.5 (2014) declara soporte hasta gcc 4.8; el sistema tiene gcc 12.2 & Obsolescencia \textit{legacy} \\
+\hline
+3 & Instalación silenciosa fallida sin aviso claro & El meta-instalador \texttt{--silent} oculta el fallo real de un subinstalador anidado & Instalador poco transparente \\
+\hline
+4 & \texttt{InstallUtils.pm} no localizado & Ruta \texttt{@INC} rota en el flujo de autoextracción \textit{makeself} & Fragilidad del empaquetado \\
+\hline
+5 & El script auxiliar de samples falla & Asume una estructura (\texttt{../samples/}) distinta de la del paquete (\texttt{./cuda-samples/}) & Inconsistencia del paquete \\
+\hline
+6 & Front-end de \texttt{nvcc} incompatible con los \textit{headers} modernos & Analizador C++ de \texttt{nvcc} 6.5 (previo a C++11) frente a la glibc de Debian 12 & Obsolescencia \textit{toolchain} \\
+\hline
+\end{tabular}
+\caption{Causas raíz de la capa contenedor/CUDA}
+\label{tab:causas-contenedor}
+\end{table}
+

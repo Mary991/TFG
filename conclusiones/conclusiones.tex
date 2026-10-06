@@ -1,0 +1,42 @@
+\chapter*{Conclusiones}
+\addcontentsline{toc}{chapter}{Conclusiones}
+
+Este trabajo se planteó como un estudio experimental para responder a una pregunta concreta: \emph{¿es posible aprovechar múltiples GPUs heterogéneas ---de años, generaciones y propósitos distintos--- dentro de una misma máquina?} A lo largo de los capítulos anteriores hemos construido un sistema real con dos de las tres tarjetas NVIDIA disponibles de la arquitectura GT200 (2008--2009) y hemos documentado, paso a paso, qué ha sido posible hacer con ellas y qué no. La configuración experimental empleó dos tarjetas, una Tesla C1060 y la ENGTS250, porque la tercera no fue detectada a través del \textit{riser} PCIe. A continuación recogemos las conclusiones del trabajo, organizadas en torno a las fases del proyecto, y las líneas de trabajo futuro.
+
+\section*{Conclusiones por fase}
+
+\textbf{Sobre la virtualización completa (capítulo 2).} El aislamiento de cada GPU en una máquina virtual mediante VFIO resultó inviable para este hardware. En las pruebas realizadas, ninguna de las dos tarjetas pudo recuperarse por software: el caso documentado con mayor detalle fue la ASUS ENGTS250, que solo expone los métodos \texttt{pm} y \texttt{bus}, sin FLR, y quedó eléctricamente colgada. La VBIOS sin soporte UEFI impide además un paso directo estable con QEMU/KVM. La conclusión técnica es que la virtualización completa no es la vía adecuada para integrar estas GPUs \textit{legacy} en la plataforma empleada, y que la documentación de este fallo fue tan valiosa como lo habría sido un éxito: delimitó con precisión las condiciones que debe cumplir cualquier vía alternativa.
+
+\textbf{Sobre los contenedores LXC (capítulos 3 y 4).} La vía de los contenedores resultó la adecuada. Al compartir el kernel del host, los contenedores no necesitan ni IOMMU ni resets de dispositivo: basta con montar los \textit{character devices} del driver. La contrapartida ---la limitación del driver único--- se convirtió en el problema central, y su solución constituye el principal resultado técnico del trabajo: es posible ejecutar el driver \textit{legacy} NVIDIA 340.108 (2019) sobre un kernel de 2026 mediante parches comunitarios y DKMS. La validación final fue contundente: código CUDA real (\texttt{deviceQuery}) ejecutándose de extremo a extremo dentro del contenedor, con ambas tarjetas operativas simultáneamente.
+
+\textbf{Sobre el rendimiento (capítulo 5).} Los benchmarks confirman que el aprovechamiento conjunto de las tarjetas es real y no degrada el rendimiento individual: ambas GPUs ejecutan cargas concurrentes sin contención apreciable, con un rendimiento acorde a sus especificaciones. El análisis de los ratios medidos revela además que la heterogeneidad no siempre se traduce en ratios predecibles a partir de las especificaciones, como muestra el ancho de banda interno de la C1060.
+
+\textbf{Sobre las limitaciones.} El trabajo ha identificado tres tipos de limitaciones. (1) \emph{Limitaciones de software}: la instalación de software NVIDIA/CUDA de más de diez años de antigüedad sobre sistemas modernos requiere sistemáticamente extracción y ejecución manual por capas, y el desarrollo de código CUDA nuevo requiere un entorno de compilación adicional (\textit{chroot} con una distribución de 2015). (2) \emph{Limitaciones de mantenimiento}: la viabilidad de este tipo de despliegues depende enteramente del mantenimiento comunitario de los parches del driver, un riesgo que debe asumirse al adoptar esta vía. (3) \emph{Limitaciones físicas}: el hardware carece de telemetría de potencia, de memoria unificada y de soporte para arquitecturas de cómputo modernas, lo que restringe los \textit{toolkits} utilizables (CUDA 6.5 como límite) y dificulta la monitorización energética.
+
+\section*{Respuesta a la pregunta de viabilidad}
+
+A la vista de los resultados, la respuesta a la pregunta inicial es \emph{sí, con condiciones}. Es viable aprovechar de forma conjunta GPUs heterogéneas en una misma máquina cuando se cumplen las condiciones del marco, en particular que todas las tarjetas compartan familia de driver (misma rama \textit{legacy}) y que se acepten las restricciones de software y mantenimiento derivadas de la obsolescencia. La heterogeneidad de propósito (cómputo vs. consumo) y de rendimiento no supone un obstáculo técnico para la integración: el sistema las trata como dos dispositivos independientes del mismo driver.
+
+El caso de estudio es, en realidad, el caso más favorable dentro de la heterogeneidad: dos tarjetas de la misma arquitectura. La generalización a tarjetas de \textbf{marcas distintas} (p. ej., NVIDIA y AMD) o de generaciones con drivers incompatibles entre sí queda fuera del alcance de este trabajo, y las conclusiones apuntan a que en esos casos la vía de los contenedores no sería aplicable sin un esfuerzo adicional significativo, lo que constituye una línea de trabajo futuro natural.
+
+\section*{Trabajo futuro}
+
+Las líneas de trabajo futuro que se desprenden de este proyecto son las siguientes:
+
+\begin{itemize}
+    \item \textbf{Medición del consumo eléctrico} con instrumentación externa (vatímetro o enchufe inteligente), siguiendo el protocolo definido en el capítulo 5, para cuantificar el coste energético real de este tipo de despliegues.
+
+    \item \textbf{Ampliación de la heterogeneidad}: incorporar al sistema tarjetas de generaciones distintas dentro de la misma rama de drivers y estudiar configuraciones que respeten la limitación del driver único. Si las nuevas tarjetas exigieran ramas incompatibles entre sí, sería necesario un aislamiento real por máquina virtual, ya que asignar cada GPU a un contenedor distinto no basta: todos los contenedores comparten el mismo módulo del kernel del anfitrión.
+
+    \item \textbf{Heterogeneidad de marcas}: estudiar la integración de GPUs AMD (OpenCL) junto a las NVIDIA (CUDA), analizando las diferencias de \textit{runtime} y las alternativas de abstracción entre ambos ecosistemas.
+
+    \item \textbf{Frameworks multi-GPU}: evaluar el rendimiento conjunto con cargas de trabajo que distribuyan computación entre ambas tarjetas de forma coordinada, más allá de la ejecución concurrente independiente estudiada en este trabajo.
+
+    \item \textbf{Automatización del despliegue}: completar y validar el script de instalación del driver y extenderlo a la configuración del contenedor y a la gestión del arranque dual LXC/VFIO, de modo que el procedimiento reproducible documentado en los apéndices pueda ejecutarse de forma idempotente sobre un segundo host con hardware equivalente.
+\end{itemize}
+
+En definitiva, este trabajo demuestra que el aprovechamiento de GPUs heterogéneas es un problema real, con solución parcial y con muchas aristas técnicas abiertas. La documentación exhaustiva de los obstáculos y de sus causas raíz, que constituye el cuerpo de esta memoria, es la aportación principal del proyecto: permite a cualquier persona interesada en construir un sistema de este tipo conocer de antemano dónde están los límites y cómo salvar los problemas documentados.
+
+\section*{Sobre la novedad y originalidad del trabajo}
+
+Cabe preguntarse si un sistema con 235.75 GFlop/s totales (capítulo~5) tiene novedad frente a una sola GPU moderna de 15 TFlop/s. La respuesta es que la aportación no reside en el \textit{speedup} bruto, sino en la \textbf{sistematización de las condiciones de viabilidad}. A diferencia de la mayoría de guías que reportan solo el éxito, este trabajo documenta 15 modos de fallo reproducibles y su causa raíz (capítulo~3), cuantifica el impacto de la topología PCIe de consumo (x4 vía chipset vs. x16 directo, sección~\ref{sec:pcie_lanes}) y propone un marco formal $V = F_{\text{driver}} \land F_{\text{aislamiento}} \land F_{\text{carga}} \land F_{\text{coste}} \land F_{\text{estabilidad}}$ (secciones~\ref{sec:marco_viabilidad} y~\ref{sec:marco_decision}) basado en Amdahl \cite{amdahl1967}, Gustafson \cite{gustafson1988} y Roofline \cite{williams2009roofline} que permite decidir \textit{a priori} si un reaprovechamiento compensa. Ese marco, junto con la validación de que la heterogeneidad no introduce contención en cargas \textit{compute-bound} pero sí estrangula las \textit{transfer-bound} (1603 vs. 778 MB/s medidos), constituye la contribución original y transferible más allá del hardware concreto GT200.

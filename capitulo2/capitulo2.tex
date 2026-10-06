@@ -1,0 +1,265 @@
+\chapter{Aislamiento de GPUs con máquinas virtuales} \label{cap2}
+
+En este capítulo se aborda el segundo de los escenarios planteados en el capítulo 1: encapsular cada una de las tarjetas en una máquina virtual, cada una con su sistema operativo y su versión de driver correspondiente. Se describen los fundamentos del aislamiento de dispositivos, los obstáculos encontrados y el fallo documentado que llevó a descartar esta vía.
+
+\section{Planteamiento}
+
+Recordemos la situación de partida. Se disponía de tres GPUs NVIDIA que solo admiten la rama de driver 340.xx, aunque la configuración experimental empleó las dos tarjetas detectadas, y de
+un sistema moderno (Proxmox VE) que difícilmente puede ejecutar esa rama sin parches. La idea de este capítulo 
+es dar la vuelta al problema: en lugar de hacer que el host ejecute el driver antiguo, se crean máquinas virtuales 
+con sistemas operativos con compatibilidad para ello, cada una de las cuales recibe una GPU en exclusiva mediante 
+el paso directo de 
+dispositivos (VFIO). Cada máquina virtual carga su propio driver, y la limitación del driver único queda superada 
+por construcción.
+
+Para que el \textit{passthrough} funcione, se necesita que el host cumpla tres condiciones \cite{proxmox_pci_passthrough,kernel_vfio,supermicro_gpu_passthrough}:
+
+\begin{enumerate}
+    \item Disponer de IOMMU activada, de forma que los accesos DMA de cada dispositivo queden restringidos a su espacio de direcciones virtual.
+
+    \item Que la GPU objetivo constituya por sí sola un grupo IOMMU (o que todos los miembros del grupo puedan cederse), de modo que el kernel permita el aislamiento individual del dispositivo.
+
+    \item Que el dispositivo soporte correctamente el \textbf{Function Level Reset}, de modo que al reiniciar la máquina virtual el 
+    dispositivo pueda devolverse a un estado limpio y listo para el próximo arranque.
+\end{enumerate}
+
+\subsection{Ajustes de configuración específicos para VFIO}
+
+Para el despliegue de esta fase experimental se diferenciaron dos niveles complementarios de virtualización asistida 
+por hardware:
+
+\begin{itemize}
+    \item \textbf{SVM / AMD-V:} \textit{Secure Virtual Machine} (SVM) es el nombre de la arquitectura de instrucciones 
+    que conforma la tecnología comercial AMD-V (\textit{AMD Virtualization}). Proporciona las extensiones de hardware 
+    en el procesador necesarias para que el hipervisor KVM ejecute el código de las máquinas virtuales de forma nativa 
+    en la CPU física.
+    \item \textbf{AMD-Vi:} Constituye la implementación de AMD para la IOMMU 
+    (\textit{I/O Memory Management Unit}), el circuito integrado encargado de traducir y restringir los 
+    accesos directos a memoria física (\textit{Direct Memory Access}, DMA) emitidos por los periféricos.
+\end{itemize}
+
+En la configuración del firmware UEFI se habilitaron explícitamente ambas características: el modo SVM/AMD-V para permitir la
+instanciación de máquinas virtuales completas, y AMD-Vi para que el \textit{kernel} de Linux estructurase los grupos IOMMU
+necesarios para el aislamiento de cada GPU mediante el controlador \texttt{vfio-pci}.
+
+Asimismo, fue necesario neutralizar \textit{Nouveau} ---el controlador libre y de código abierto 
+para GPUs NVIDIA incluido por defecto en el núcleo de Linux---, ya que de lo contrario interferirá en 
+la asignación de las tarjetas a \textit{vfio-pci}. Para impedirlo, 
+se añadió el módulo a la lista negra (\textit{blacklist}) \cite{arch_nouveau}.
+
+Los experimentos de este capítulo se ejecutaron seleccionando una sola vez la entrada VFIO del arranque dual descrito en el 
+capítulo~\ref{cap1}; su uso operativo se resume en el apéndice~\ref{ape:manual-uso}.
+
+\section{Evaluación experimental de passthrough mediante VFIO}
+
+El objetivo de esta fase era comprobar si podíamos aislar cada una de nuestras tarjetas 
+gráficas y pasárselas de forma exclusiva a una máquina virtual con KVM/QEMU vinculándolas
+al módulo \texttt{vfio-pci}. 
+
+
+\subsection{El primer tropiezo: la ASUS ENGTS250 no responde}
+
+Tras arrancar el sistema con la configuración de VFIO mediante el script \texttt{boot-vfio}, 
+comprobamos qué dispositivos se vinculan correctamente al controlador \texttt{vfio-pci}. 
+Lo que cabía esperar era que al escanear el bus PCIe aparecieran las dos tarjetas conectadas: la Tesla C1060, en la
+ranura principal, y la ASUS, en la ranura secundaria.
+La sorpresa fue que en la lista únicamente figuraba la Tesla C1060; la ASUS ENGTS250 no aparecía.
+
+Consultando los registros del \textit{kernel}, encontramos el origen del problema: 
+un fallo durante la fase de negociación de la velocidad y anchura del bus PCIe (\textit{link training}). 
+Este paso ocurre en la capa de enlace puramente física, mucho antes de que ningún controlador entre en juego. 
+Al intentar aplicar un reinicio sobre la tarjeta, esta simplemente no contestó a tiempo, y el 
+\textit{chipset} de la placa base la catalogó directamente como rota (\textit{broken device}) para no 
+comprometer la estabilidad del resto del bus.
+
+Este estado de bloqueo es crítico: una vez que el sistema coloca al dispositivo con esta marca, 
+cesan todos los 
+reintentos de comunicación. Ni siquiera conmutando entre configuraciones 
+lograríamos devolver la tarjeta a su estado operativo. La tarjeta queda eléctricamente aislada, y un 
+reinicio por software resulta inútil, por lo que hay que recurrir a un apagado manual completo (corte físico de 
+corriente). Este debería ser siempre el último recurso, pues en un escenario sin acceso presencial al 
+equipo dejaría el nodo totalmente inutilizable.
+
+\subsection{Comprobaciones y ajustes en busca de una solución}
+
+Antes de resignarnos con el peor escenario, se explora qué margen de 
+maniobra exponen las tarjetas mediante software y configuración:
+
+\paragraph{1. Inspección de los mecanismos de reinicio (Reset):}
+Consultamos qué métodos de reinicio soportaba la tarjeta a través de \textit{sysfs}:
+\begin{lstlisting}[language=bash]
+$ cat /sys/bus/pci/devices/0000:08:00.0/reset_method
+pm bus
+\end{lstlisting}
+
+Dado que la arquitectura de la familia GT200 carece de soporte por hardware para 
+FLR (\textit{Function-Level Reset}), el \textit{kernel} debe recurrir a los mecanismos 
+de contingencia expuestos por el dispositivo. La consulta a \texttt{reset\_method} confirmó 
+que las únicas alternativas disponibles eran la transición de energía (\texttt{pm}) y el 
+reinicio del bus, en este caso (\texttt{bus}, correspondiente al \textit{Secondary Bus Reset} o SBR) por estar
+en la ranura compartida con el \textit{chipset}.
+
+El método \texttt{pm} se apoya en el subsistema de gestión de energía PCI: fuerza al dispositivo 
+a entrar en estado de bajo consumo \texttt{D3hot} (con alimentación presente pero relojes detenidos 
+y pérdida del contexto interno) para devolverlo de inmediato a \texttt{D0} (rendimiento máximo), confiando en que la 
+tarjeta se reinicie de forma limpia durante la transición \cite{kernel_pci_pm}. Sin embargo, 
+en hardware de esta generación, dicha transición describe un comportamiento conocido, y por tanto,
+mucho menos fiable. Ante esta incertidumbre, el \textit{kernel} 
+se ve forzado a aplicar el método \texttt{bus} (SBR): una maniobra sustancialmente más agresiva que, 
+al no poder aislar la GPU, induce una interrupción eléctrica abrupta sobre el 
+enlace PCIe completo para forzar su reinicialización.
+
+Este comportamiento resulta llamativo en lo relativo a las diferencias de comportamiento de las tarjetas durante las pruebas: 
+a pesar de compartir una arquitectura muy similar, la inestabilidad y el colapso del bus se 
+manifestaron de forma crítica en la ASUS ENGTS250 y no en la Tesla C1060. Como hipótesis de 
+trabajo, la causa más plausible apunta a la topología física de conexión de cada tarjeta en 
+la placa base. Mientras que la ranura principal de la Tesla se comunica a través de líneas 
+PCIe dedicadas conectadas directamente a la CPU, la ASUS se encontraba instalada en una 
+ranura secundaria subordinada a las líneas del \textit{chipset}. Al inducir un reinicio del bus secundario 
+de bus (SBR) sobre un enlace intermediado por el \textit{chipset}, la perturbación eléctrica no 
+solo afectó a la GPU, sino que desestabilizó el conmutador interno de dicho puente, arrastrando 
+consigo a otros periféricos multiplexados en el mismo bus ---incluida la controladora de 
+almacenamiento del \textit{host}--- y provocando el bloqueo total del sistema.
+
+\paragraph{2. Control eléctrico del slot (Hotplug Power):}
+Comprobamos si la placa base permite cortar la corriente de la ranura PCIe por software para 
+emular el tirón de cable:
+\begin{lstlisting}[language=bash]
+$ ls /sys/bus/pci/slots/
+\end{lstlisting}
+El resultado fue negativo. La gestión de energía independiente por ranura es habitual en placas 
+de servidor, pero inexistente en placas de consumo convencionales.
+
+\paragraph{3. Desactivación de mecanismos de ahorro de energía:}
+La hipótesis de trabajo era que las funciones de gestión de energía del PCIe estaban 
+mandando a la tarjeta a estados de reposo de los que luego era incapaz de despertar a tiempo. 
+Por ello, aplicamos una serie de directivas agresivas en la línea de comandos del \textit{kernel} 
+(\texttt{cmdline}) y en la BIOS:
+\begin{itemize}
+    \item \textbf{\texttt{vfio\_pci.disable\_idle\_d3=1}:} Evita que el controlador ponga la GPU en 
+    reposo profundo ($D3_{hot}$) mientras la máquina virtual no la usa. Al ser la tarjeta tan antigua, 
+    los comportamientos no son predecibles.
+    \item \textbf{\texttt{pcie\_aspm=off}:} Deshabilita por completo el ahorro de energía en el propio 
+    enlace físico PCIe (\textit{Active-State Power Management}).
+    \item \textbf{\texttt{pcie\_port\_pm=off}:} Desactiva la gestión de energía en el puente 
+    PCIe que da acceso a la GTS250. Este parámetro fue determinante para evitar que el puente del que cuelga la GPU
+    cortase la comunicación durante la reconfiguración.
+    \item \textbf{\texttt{pci=noaer}:} Desactiva el reporte avanzado de errores para evitar que el 
+    sistema sobrerreaccione ante pequeñas inestabilidades del enlace. Este parámetro más que solucionar un problema
+    en caso de haberlo, lo enmascararía.
+\end{itemize}
+
+Tras forzar la modificación de estos parámetros, se consiguió que ambas GPUs, Tesla C1060 y ahora también la ASUS ENGTS 250,
+se vinculasen al módulo \textit{vfio}.
+De entre los parámetros modificados, la principal sospecha de éxito recayó en \texttt{vfio\_pci.disable\_idle\_d3=1}: 
+impedir que VFIO dejara la GPU en \texttt{D3hot} eliminaba una transición energética problemática. 
+No obstante, como todas estas directivas se aplicaron conjuntamente, su efecto 
+individual no quedó aislado; esta explicación es coherente con el momento del cuelgue, pero no demuestra por sí 
+sola cuál fue el parámetro determinante. Sabiendo que con estas pruebas estábamos exponiendo al sistema a comportamientos
+eléctricos no conocidos, se decidió dar por válida la vinculación sin determinar cuál de los parámetros exactos 
+nos hizo avanzar.
+
+
+Así pues con estos cambios conseguimos el primer gran avance: la ASUS ENGTS250 completó el \textit{binding} 
+con \texttt{vfio-pci} de forma consistente. La negociación se estabilizó a menor velocidad ($\times 4$ 
+a 2.5 GT/s en lugar de sus $\times 16$ nominales), lo que ralentizaba ligeramente el arranque, pero 
+al menos habíamos eliminado el cuelgue eléctrico inicial.
+
+\subsection{La prueba de fuego en la máquina virtual y el cuelgue definitivo}
+
+Con el controlador \texttt{vfio-pci} adueñado de la tarjeta, lo siguiente era comprobar si podíamos levantar 
+una máquina virtual funcional. Diseñamos un protocolo de validación adaptado a las limitaciones 
+heredadas de las tarjetas:
+\begin{enumerate}
+    \item Se configuró la máquina virtual con \textbf{SeaBIOS} (emulación de BIOS clásica de 16 bits) 
+    y tipo de máquina \textbf{i440fx}, debido a la ausencia de GOP en la VBIOS de la GPU.
+    \item Se instaló el sistema operativo base sin la GPU conectada para evitar interferencias.
+    \item Se añadió la tarjeta gráfica mediante la directiva \texttt{hostpci0: 08:00.0}, aplicando dos 
+    precauciones clave:
+    \begin{itemize}
+        \item \textbf{Desactivar la lectura de la ROM (\texttt{rombar=0}):} Evita que QEMU exponga 
+        la memoria ROM de la tarjeta (\textit{Expansion ROM BAR}) a la máquina virtual. En tarjetas 
+        antiguas, el acceso y mapeo de esta región de memoria entra en conflicto con los registros 
+        de control principales (BAR0/MMIO) del dispositivo una vez que este ya ha sido inicializado. 
+        Dado que la GPU se destina exclusivamente a tareas de cómputo y no a la salida gráfica del 
+        arranque de la VM, la exposición de la VBIOS resulta innecesaria y su desactivación elimina 
+        bloqueos por contención en el bus.
+        \item \textbf{Desactivación de la GPU primaria (\texttt{x-vga=0}):} Evita que el hipervisor 
+        trate a la GPU física como el adaptador VGA principal de la máquina virtual. 
+        En su lugar, se configuró una tarjeta gráfica virtual emulada 
+        (\textit{VirtIO-GPU}), la cual redirige la salida de vídeo del sistema operativo invitado hacia 
+        la consola web del hipervisor mediante el protocolo noVNC (cliente VNC integrado en la interfaz 
+        de Proxmox). De este modo, la GTS250 queda liberada de cualquier función de salida de vídeo, 
+        quedando asignada como acelerador secundario dedicado exclusivamente a cómputo.
+    \end{itemize}
+\end{enumerate}
+
+Pese a todas las precauciones, en el momento exacto en que la máquina virtual intentó arrancar e 
+inicializar la tarjeta, el sistema anfitrión se congeló por completo, obligando de nuevo a forzar el 
+apagado manual del equipo. 
+
+Como detalle relevante, la interfaz de Proxmox reportó la máquina virtual como iniciada con éxito
+mientras el equipo ya estaba totalmente bloqueado; un claro falso positivo en la monitorización. 
+Esta prueba confirmó de manera empírica que, aun resolviendo los problemas del enlace físico a base de 
+parámetros en el \textit{kernel}, la incapacidad de estas tarjetas antiguas para recuperarse de un reinicio por 
+software hace inviable su uso estable mediante VFIO en nuestra plataforma.
+
+\section{Resultado y decisión}
+
+Tras múltiples intentos de configuración (activación de IOMMU en la BIOS, reserva de las GPUs con el módulo \texttt{vfio-pci}, pases de ID de dispositivo, etc.), el despliegue de las VMs con VFIO se descartó por inviable:
+
+\begin{itemize}
+    \item La ausencia de \textbf{FLR} de ambas tarjetas impide la reutilización del dispositivo
+entre máquinas virtuales: el ciclo de vida de la VM (apagado $\rightarrow$ reinicio) deja la GPU
+inaccesible eléctricamente.
+\end{itemize}
+
+Como se mencionó anteriormente, por integridad del sistema, 
+se decidió no repetir sistemáticamente estos bloqueos eléctricos: cada cuelgue exigía un apagado manual y 
+exponía el sistema de ficheros y el arranque a nuevos daños. La conclusión se apoya, por tanto, en la repetición 
+del patrón de fallo y en su coherencia con la ausencia de recuperación por software, ya que el apagado manual
+no es ni solución definitiva ni robusta.
+
+\section{Análisis comparativo: máquinas virtuales frente a contenedores}
+
+A la vista de lo experimentado en este capítulo, la tabla \ref{tab:vm-lxc} resume la comparación 
+cualitativa entre las dos vías de compartición de GPUs analizadas hasta ahora. Aunque el capítulo 3 y 
+siguientes desarrollan la vía de los contenedores, anticipar aquí la comparación ayuda a situar el fallo 
+de este capítulo en su contexto: no se trata de una vía desaconsejada en términos generales, sino de una vía inadecuada para 
+las características concretas de nuestro hardware.
+
+\begin{table}[htbp]
+\centering
+\singlespacing
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabularx}{\textwidth}{|>{\raggedright\arraybackslash}p{2.7cm}|>{\raggedright\arraybackslash}X|>{\raggedright\arraybackslash}X|}
+\hline
+\textbf{Criterio} & \textbf{Máquina virtual (VFIO)} & \textbf{Contenedor LXC} \\
+\hline
+Aislamiento del hardware & Total (dispositivo dedicado) & Compartido (\textit{device nodes} del host) \\
+\hline
+Versiones de driver & Una distinta por VM & Una única para todo el sistema \\
+\hline
+Requisitos de plataforma & IOMMU activa, grupos IOMMU, FLR correcto & Ninguno \\
+\hline
+Reinicio del dispositivo & Necesita reset limpio (FLR); crítico para el ciclo de vida de la VM & No interviene: el driver sigue en el host \\
+\hline
+Coste de configuración & Alto (BIOS, \texttt{vfio-pci}, ROM de vídeo) & Bajo (\textit{cgroup} + \textit{bind mount}) \\
+\hline
+Uso conjunto con el host & Imposible (GPU exclusiva de la VM) & Posible (driver compartido) \\
+\hline
+Idoneidad con hardware \textit{legacy} & Mala (FLR incompleto, VBIOS sin UEFI) & Buena (el driver lo resuelve el host) \\
+\hline
+\end{tabularx}
+\caption{Comparación cualitativa entre máquinas virtuales y contenedores para la compartición de GPUs}
+\label{tab:vm-lxc}
+\end{table}
+
+La conclusión de este capítulo es que la virtualización completa no es la vía adecuada para integrar GPUs 
+\textit{legacy} en sistemas modernos. No obstante, el análisis no fue en vano: delimitó con precisión 
+las condiciones que debe cumplir cualquier vía alternativa. La vía de los contenedores LXC, que se estudia en 
+el capítulo siguiente, no necesita ni IOMMU ni reset de dispositivos, ya que el contenedor comparte el kernel 
+del host y, por tanto, el propio driver que ya controla las tarjetas. La contrapartida es volver a la limitación 
+del driver único: solo puede haber un driver propietario en el sistema. 
+

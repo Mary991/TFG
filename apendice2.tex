@@ -1,0 +1,116 @@
+\setcounter{chapter}{7}
+\setcounter{section}{0}
+\setcounter{table}{0}
+\setcounter{figure}{0}
+
+\addcontentsline{toc}{chapter}{Apéndice 2: Procedimiento reproducible del contenedor y CUDA}
+
+\makeatletter
+\def\@currentlabel{\thechapter}
+\makeatother
+\label{ape:contenedor-cuda}
+
+\chapter*{Apéndice 2: Procedimiento reproducible del contenedor y CUDA}
+
+Este apéndice resume la creación del contenedor LXC con acceso a las GPUs y la instalación del stack CUDA 6.5, asumiendo que el driver 340.108 ya está operativo en el host (apéndice~\ref{ape:host}).
+
+\section{Creación y configuración del contenedor}
+
+\begin{Verbatim}
+# 1. Obtener la plantilla (consultar el nombre exacto con pveam available)
+pveam update
+pveam available --section system | grep debian-12
+pveam download local <nombre-exacto-de-la-plantilla>
+
+# 2. Crear el contenedor (privilegiado, con nesting)
+pct create 200 local:vztmpl/<plantilla>.tar.zst \
+  --hostname gpu-tfg \
+  --cores 4 \
+  --memory 4096 \
+  --rootfs local-lvm:32 \
+  --net0 name=eth0,bridge=vmbr0,ip=dhcp \
+  --unprivileged 0 \
+  --features nesting=1
+
+# 3. Configurar el paso de dispositivos en /etc/pve/lxc/200.conf
+#    lxc.cgroup2.devices.allow: c 195:* rwm
+#    lxc.mount.entry: /dev/nvidia0 dev/nvidia0 none bind,optional,create=file
+#    lxc.mount.entry: /dev/nvidia1 dev/nvidia1 none bind,optional,create=file
+#    lxc.mount.entry: /dev/nvidiactl dev/nvidiactl none bind,optional,create=file
+
+# 4. Verificar los nodos en el host y arrancar
+nvidia-smi >/dev/null
+ls -la /dev/nvidia0 /dev/nvidia1 /dev/nvidiactl
+pct start 200
+pct enter 200
+\end{Verbatim}
+
+\section{Stack userspace NVIDIA en el contenedor}
+
+\begin{Verbatim}
+apt update
+apt install -y wget build-essential
+
+cd ~
+wget https://us.download.nvidia.com/XFree86/Linux-x86_64/340.108/NVIDIA-Linux-x86_64-340.108.run
+chmod +x NVIDIA-Linux-x86_64-340.108.run
+./NVIDIA-Linux-x86_64-340.108.run --no-kernel-module --no-x-check
+#   -> declinar librerías de 32 bits y configuración X11
+nvidia-smi   # ambas GPUs visibles
+\end{Verbatim}
+
+\section{CUDA Toolkit 6.5}
+
+\begin{Verbatim}
+# 1. Descarga del meta-instalador
+cd ~
+wget https://developer.download.nvidia.com/compute/cuda/6_5/rel/installers/cuda_6.5.14_linux_64.run
+chmod +x cuda_6.5.14_linux_64.run
+
+# 2. Nivel 1: extraer los subinstaladores
+mkdir -p ~/cuda-extract
+./cuda_6.5.14_linux_64.run --extract=$HOME/cuda-extract
+
+# 3. Nivel 2: extraer el toolkit a ruta persistente y ejecutar el instalador Perl
+cd ~/cuda-extract
+chmod +x cuda-linux64-rel-6.5.14-18749181.run
+./cuda-linux64-rel-6.5.14-18749181.run --keep --target ~/cuda-toolkit-extracted --noexec
+cd ~/cuda-toolkit-extracted
+perl -I. ./install-linux.pl -noprompt -prefix=/usr/local/cuda-6.5
+
+# 4. Samples (extracción manual y copia del árbol)
+cd ~/cuda-extract
+chmod +x cuda-samples-linux-6.5.14-18745345.run
+./cuda-samples-linux-6.5.14-18745345.run --keep --target ~/cuda-samples-extracted --noexec
+mkdir -p ~/NVIDIA_CUDA-6.5_Samples
+cp -r ~/cuda-samples-extracted/cuda-samples/* ~/NVIDIA_CUDA-6.5_Samples/
+
+# 5. Configuración del entorno
+echo 'export PATH=/usr/local/cuda-6.5/bin:$PATH' >> ~/.bashrc
+echo 'export LD_LIBRARY_PATH=/usr/local/cuda-6.5/lib64:$LD_LIBRARY_PATH' >> ~/.bashrc
+source ~/.bashrc
+nvcc --version
+\end{Verbatim}
+
+\section{Validación y benchmarks}
+
+\begin{Verbatim}
+# 1. deviceQuery (cómputo real)
+find ~/NVIDIA_CUDA-6.5_Samples -iname "deviceQuery" -type d
+cd <ruta>/1_Utilities/deviceQuery
+make && ./deviceQuery
+
+# 2. Compilación de los benchmarks en el chroot Debian Jessie (solo compilación)
+apt install -y debootstrap
+debootstrap --no-check-gpg --arch=amd64 jessie /root/old-chroot http://archive.debian.org/debian/
+#  (sources.list con archive.debian.org, build-essential, bind mounts de /proc,
+#   /dev, /sys, el toolkit y los samples; ver capítulo 5)
+
+# 3. Ejecución de los benchmarks en el contenedor principal
+cd ~/NVIDIA_CUDA-6.5_Samples/0_Simple/matrixMul
+./matrixMul --device=0
+./matrixMul --device=1
+cd ~/NVIDIA_CUDA-6.5_Samples/1_Utilities/bandwidthTest
+./bandwidthTest --device=0
+./bandwidthTest --device=1
+\end{Verbatim}
